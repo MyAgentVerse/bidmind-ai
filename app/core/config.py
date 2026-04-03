@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4-turbo-preview"  # or gpt-4o, gpt-3.5-turbo
+    openai_model: str = "gpt-4o"  # Latest GPT-4 Omni model
 
     # File Upload
     upload_dir: str = "uploads"
