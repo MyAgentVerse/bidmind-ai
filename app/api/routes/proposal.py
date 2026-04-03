@@ -1,6 +1,8 @@
 """Proposal generation and management endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+import logging
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Project, ProposalDraft
@@ -8,6 +10,8 @@ from app.schemas.proposal import ProposalResponse, ProposalUpdate, ProposalSecti
 from app.schemas.common import SuccessResponse
 from app.utils.response_helpers import create_success_response, MESSAGES
 from app.api.deps import proposal_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["proposal"])
 
@@ -54,9 +58,10 @@ async def generate_proposal(
 @router.post("/{project_id}/proposal", response_model=SuccessResponse)
 async def generate_proposal_endpoint(
     project_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
-    """Generate proposal draft from analysis results."""
+    """Generate proposal draft from analysis results (async background task)."""
     try:
         # Verify project exists
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -66,24 +71,33 @@ async def generate_proposal_endpoint(
                 detail=MESSAGES["PROJECT_NOT_FOUND"]
             )
 
-        # Run proposal generation
-        try:
-            proposal = await proposal_service.generate_proposal(str(project_id), db)
+        # Verify analysis exists
+        from app.models import AnalysisResult
+        analysis = db.query(AnalysisResult).filter(
+            AnalysisResult.project_id == project_id
+        ).first()
 
-            return create_success_response(
-                message=MESSAGES["PROPOSAL_GENERATED"],
-                data=ProposalResponse.from_orm(proposal).model_dump()
-            )
-
-        except ValueError as e:
+        if not analysis:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
+                detail="No analysis results found. Please analyze the document first."
             )
+
+        # Start proposal generation in background
+        background_tasks.add_task(
+            proposal_service.generate_proposal_background,
+            str(project_id)
+        )
+
+        return create_success_response(
+            message="Proposal generation started. Check back in a moment.",
+            data={"status": "generating", "project_id": project_id}
+        )
 
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error starting proposal generation: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["INTERNAL_ERROR"]

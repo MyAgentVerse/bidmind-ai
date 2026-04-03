@@ -243,3 +243,28 @@ class ProposalService:
             Dictionary with all sections
         """
         return proposal.to_dict()
+
+    def generate_proposal_background(self, project_id: str) -> None:
+        """
+        Generate proposal in background (for BackgroundTasks).
+
+        This is a synchronous wrapper that creates its own database session
+        and runs proposal generation without blocking the HTTP response.
+
+        Args:
+            project_id: The project ID
+        """
+        from app.core.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            # Create a new event loop for this background task
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            loop.run_until_complete(self.generate_proposal(project_id, db))
+            logger.info(f"Background proposal generation completed for {project_id}")
+        except Exception as e:
+            logger.error(f"Background proposal generation failed for {project_id}: {str(e)}")
+        finally:
+            db.close()
