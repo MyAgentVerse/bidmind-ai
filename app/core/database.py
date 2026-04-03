@@ -5,7 +5,7 @@ Provides SQLAlchemy engine, session factory, and dependency injection.
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 from .config import get_settings
 import logging
 
@@ -14,14 +14,24 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Create database engine
-# Using NullPool for SQLite compatibility and simple deployments
-# Switch to QueuePool for production with connection pooling
-engine = create_engine(
-    settings.database_url,
-    echo=settings.debug,
-    poolclass=NullPool,  # Use QueuePool in production
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
-)
+# Use QueuePool for production with connection pooling and recycling
+# Use NullPool for SQLite development
+if "sqlite" in settings.database_url:
+    engine = create_engine(
+        settings.database_url,
+        echo=settings.debug,
+        poolclass=NullPool,
+        connect_args={"check_same_thread": False}
+    )
+else:
+    engine = create_engine(
+        settings.database_url,
+        echo=settings.debug,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=3600,  # Recycle connections after 1 hour
+        pool_pre_ping=True,  # Test connection before using it
+    )
 
 # Create session factory
 SessionLocal = sessionmaker(

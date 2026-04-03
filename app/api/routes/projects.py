@@ -1,6 +1,7 @@
 """Project management endpoints."""
 
 from typing import List
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -8,6 +9,8 @@ from app.models import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectListResponse
 from app.schemas.common import SuccessResponse
 from app.utils.response_helpers import create_success_response, create_error_response, MESSAGES
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -37,9 +40,10 @@ async def create_project(
 
     except Exception as e:
         db.rollback()
+        logger.error(f"Error creating project: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=MESSAGES["DATABASE_ERROR"]
+            detail=f"Database error: {str(e)}"
         )
 
 
@@ -92,9 +96,10 @@ async def list_projects(
         )
 
     except Exception as e:
+        logger.error(f"Error listing projects: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=MESSAGES["DATABASE_ERROR"]
+            detail=f"Database error: {str(e)}"
         )
 
 

@@ -34,14 +34,16 @@ def upgrade() -> None:
     op.create_index(op.f('ix_companies_id'), 'companies', ['id'], unique=False)
     op.create_index(op.f('ix_companies_name'), 'companies', ['name'], unique=False)
 
-    # Add company_id to projects table
+    # Add company_id to projects table with foreign key constraint
     op.add_column('projects', sa.Column('company_id', postgresql.UUID(as_uuid=True), nullable=True))
+    op.create_foreign_key('fk_projects_company_id', 'projects', 'companies', ['company_id'], ['id'])
     op.create_index(op.f('ix_projects_company_id'), 'projects', ['company_id'], unique=False)
 
 
 def downgrade() -> None:
     # Drop company_id from projects
     op.drop_index(op.f('ix_projects_company_id'), table_name='projects')
+    op.drop_constraint('fk_projects_company_id', 'projects', type_='foreignkey')
     op.drop_column('projects', 'company_id')
 
     # Drop companies table
