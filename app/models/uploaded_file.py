@@ -30,7 +30,7 @@ class UploadedFile(BaseModel):
     original_filename = Column(String(255), nullable=False)
     stored_filename = Column(String(255), nullable=False, unique=True, index=True)
     file_path = Column(String(500), nullable=False)
-    mime_type = Column(String(50), nullable=False)  # e.g., "application/pdf"
+    mime_type = Column(String(255), nullable=False)  # e.g., "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     file_size = Column(Integer, nullable=False)  # In bytes
 
     # Extracted content
