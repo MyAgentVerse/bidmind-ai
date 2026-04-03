@@ -45,7 +45,7 @@ class Project(BaseModel):
     )
 
     # Foreign key to Company
-    company_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True)
 
     # Relationships
     company = relationship(
