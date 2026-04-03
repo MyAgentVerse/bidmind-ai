@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"  # Fast, affordable, and widely available
+    openai_model: str = "gpt-4o-mini" # Fast, affordable, and widely available
 
     # File Upload
     upload_dir: str = "uploads"
