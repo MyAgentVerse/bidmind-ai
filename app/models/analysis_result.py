@@ -28,7 +28,7 @@ class AnalysisResult(BaseModel):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
     # Foreign key
-    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, unique=True, index=True)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
 
     # Extracted fields
     document_type = Column(String(100), nullable=True)  # e.g., "RFP", "RFQ", "RFI"
