@@ -62,7 +62,7 @@ class AIEditService:
             prompt = get_edit_prompt(section_name, current_text, instruction)
 
             # Call OpenAI
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 max_tokens=2000,
                 messages=[
@@ -73,7 +73,7 @@ class AIEditService:
                 ]
             )
 
-            edited_text = response.content[0].text
+            edited_text = response.choices[0].message.content
 
             # Create edit history record
             edit_history = AIEditHistory(
