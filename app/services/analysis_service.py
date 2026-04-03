@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
-from app.models import AnalysisResult, Project
+from app.models import AnalysisResult, Project, Company
 from app.prompts.analysis_prompts import get_analysis_prompt
 
 logger = logging.getLogger(__name__)
@@ -31,11 +31,42 @@ class AnalysisService:
         except ImportError:
             raise ImportError("OpenAI library is required. Install with: pip install openai")
 
+    def _get_company_context(self, company_id: Optional[str], db: Session) -> Optional[str]:
+        """
+        Fetch company profile and format as context string.
+
+        Args:
+            company_id: The company ID
+            db: Database session
+
+        Returns:
+            Formatted company context string or None
+        """
+        if not company_id:
+            return None
+
+        try:
+            company = db.query(Company).filter(Company.id == company_id).first()
+            if not company:
+                return None
+
+            context = f"""Company Name: {company.name}
+Industry Focus: {company.industry_focus or 'Not specified'}
+Unique Selling Proposition: {company.unique_selling_proposition or 'Not specified'}
+Key Capabilities: {company.key_capabilities or 'Not specified'}
+Experience: {company.experience or 'Not specified'}"""
+
+            return context
+        except Exception as e:
+            logger.warning(f"Could not fetch company context: {str(e)}")
+            return None
+
     async def analyze_document(
         self,
         project_id: str,
         extracted_text: str,
-        db: Session
+        db: Session,
+        company_id: Optional[str] = None
     ) -> AnalysisResult:
         """
         Analyze extracted document text and save results.
@@ -44,6 +75,7 @@ class AnalysisService:
             project_id: The project ID
             extracted_text: The extracted text from the document
             db: Database session
+            company_id: Optional company ID for personalized analysis
 
         Returns:
             AnalysisResult object
@@ -53,8 +85,13 @@ class AnalysisService:
         """
         logger.info(f"Starting analysis for project {project_id}")
 
-        # Generate analysis prompt
-        prompt = get_analysis_prompt(extracted_text)
+        # Get company context if available
+        company_context = self._get_company_context(company_id, db)
+        if company_context:
+            logger.info(f"Using company context for project {project_id}")
+
+        # Generate analysis prompt with company context
+        prompt = get_analysis_prompt(extracted_text, company_context)
 
         try:
             # Call OpenAI API
@@ -115,10 +152,12 @@ class AnalysisService:
                 )
                 db.add(analysis_result)
 
-            # Update project status
+            # Update project status and company_id if provided
             project = db.query(Project).filter(Project.id == project_id).first()
             if project:
                 project.status = "analyzed"
+                if company_id and not project.company_id:
+                    project.company_id = company_id
 
             db.commit()
             logger.info(f"Analysis completed for project {project_id}")

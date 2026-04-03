@@ -21,7 +21,7 @@ async def generate_proposal(
     project_id: str,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
-    """Generate proposal draft from analysis results."""
+    """Generate proposal draft from analysis results with company context."""
     try:
         # Verify project exists
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -31,9 +31,17 @@ async def generate_proposal(
                 detail=MESSAGES["PROJECT_NOT_FOUND"]
             )
 
-        # Run proposal generation
+        # Run proposal generation with company context
         try:
-            proposal = await proposal_service.generate_proposal(str(project_id), db)
+            company_id = project.company_id  # Pass company_id if project has one
+            proposal = await proposal_service.generate_proposal(
+                str(project_id),
+                db,
+                company_id=company_id
+            )
+
+            if company_id:
+                logger.info(f"Proposal generated with company context for project {project_id}")
 
             return create_success_response(
                 message=MESSAGES["PROPOSAL_GENERATED"],
@@ -49,6 +57,7 @@ async def generate_proposal(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in generate_proposal: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["INTERNAL_ERROR"]
@@ -61,7 +70,7 @@ async def generate_proposal_endpoint(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
-    """Generate proposal draft from analysis results (async background task)."""
+    """Generate proposal draft from analysis results (async background task with company context)."""
     try:
         # Verify project exists
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -83,11 +92,15 @@ async def generate_proposal_endpoint(
                 detail="No analysis results found. Please analyze the document first."
             )
 
-        # Start proposal generation in background
+        # Start proposal generation in background with company context
+        company_id = project.company_id
         background_tasks.add_task(
             proposal_service.generate_proposal_background,
-            str(project_id)
+            str(project_id),
+            company_id=company_id
         )
+
+        logger.info(f"Started background proposal generation for project {project_id}")
 
         return create_success_response(
             message="Proposal generation started. Check back in a moment.",
@@ -136,6 +149,7 @@ async def get_proposal(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in get_proposal: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["DATABASE_ERROR"]
@@ -181,6 +195,7 @@ async def update_proposal_section(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in update_proposal_section: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["DATABASE_ERROR"]
@@ -231,6 +246,7 @@ async def update_full_proposal(
         raise
     except Exception as e:
         db.rollback()
+        logger.error(f"Error in update_full_proposal: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["DATABASE_ERROR"]

@@ -1,15 +1,22 @@
 """Prompts for generating proposal sections."""
 
+from typing import Optional, Dict, Any
 
-def get_cover_letter_prompt(analysis_data: dict, company_name: str = "Our Company") -> str:
+
+def get_cover_letter_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for cover letter section."""
 
     summary = analysis_data.get("opportunity_summary", "the opportunity")
-    client_focus = analysis_data.get("document_type", "procurement")
+    company_name = company.get("name", "Our Company") if company else "Our Company"
 
     prompt = f"""Write a professional cover letter for a proposal submission.
 
 The opportunity is: {summary}
+
+Company: {company_name}
 
 The cover letter should:
 1. Open with enthusiasm and understanding of the client's needs
@@ -20,22 +27,30 @@ The cover letter should:
 
 Length: 3-4 paragraphs (150-250 words)
 Tone: Professional, confident, but not arrogant
-Company: {company_name}
 
 Write ONLY the cover letter text, no introduction or explanation."""
 
     return prompt
 
 
-def get_executive_summary_prompt(analysis_data: dict, company_name: str = "Our Company") -> str:
+def get_executive_summary_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for executive summary section."""
 
     summary = analysis_data.get("opportunity_summary", "")
     requirements = analysis_data.get("mandatory_requirements", [])
     usp = analysis_data.get("usp_suggestions", [])
+    company_name = company.get("name", "Our Company") if company else "Our Company"
+    company_usp = company.get("usp", "") if company else ""
 
     requirements_text = "\n".join([f"- {r}" for r in (requirements[:3] if requirements else [])])
     usp_text = "\n".join([f"- {u}" for u in (usp[:2] if usp else [])])
+
+    company_context = ""
+    if company:
+        company_context = f"\n\nCompany USP: {company_usp}" if company_usp else ""
 
     prompt = f"""Write an executive summary for a proposal.
 
@@ -46,7 +61,7 @@ Key Requirements:
 {requirements_text if requirements_text else "- See primary document"}
 
 Our Key Differentiators:
-{usp_text if usp_text else "- Expertise and experience"}
+{usp_text if usp_text else "- Expertise and experience"}{company_context}
 
 The executive summary should:
 1. Restate the opportunity and client's core challenge
@@ -64,7 +79,10 @@ Write ONLY the executive summary text, no introduction or explanation."""
     return prompt
 
 
-def get_understanding_prompt(analysis_data: dict) -> str:
+def get_understanding_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for understanding of requirements section."""
 
     summary = analysis_data.get("opportunity_summary", "")
@@ -112,17 +130,26 @@ Write ONLY this section, no introduction or explanation."""
     return prompt
 
 
-def get_solution_prompt(analysis_data: dict, company_name: str = "Our Company") -> str:
+def get_solution_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for proposed solution section."""
 
     scope = analysis_data.get("scope_of_work", [])
     requirements = analysis_data.get("mandatory_requirements", [])
+    company_name = company.get("name", "Our Company") if company else "Our Company"
+    company_capabilities = company.get("capabilities", "") if company else ""
 
     scope_text = "\n".join([f"- {s}" for s in (scope[:5] if scope else [])])
 
+    capability_text = ""
+    if company_capabilities:
+        capability_text = f"\n\nOur Key Capabilities:\n{company_capabilities}"
+
     prompt = f"""Write a detailed proposed solution section for a proposal.
 
-Company: {company_name}
+Company: {company_name}{capability_text}
 
 Scope of Work to Address:
 {scope_text if scope_text else "- Full project scope"}
@@ -155,43 +182,67 @@ Write ONLY this section, no introduction or explanation."""
     return prompt
 
 
-def get_why_us_prompt(analysis_data: dict, company_name: str = "Our Company") -> str:
-    """Generate prompt for why us section."""
+def get_why_us_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
+    """Generate prompt for why us section with company profile context."""
 
     usp = analysis_data.get("usp_suggestions", [])
     fit_score = analysis_data.get("fit_score", 75)
 
     usp_text = "\n".join([f"- {u}" for u in (usp[:4] if usp else [])])
 
+    company_context = ""
+    if company:
+        company_name = company.get("name", "Our Company")
+        company_usp = company.get("usp", "")
+        company_experience = company.get("experience", "")
+        company_capabilities = company.get("capabilities", "")
+        company_industry = company.get("industry_focus", "")
+
+        company_context = f"""
+COMPANY PROFILE:
+Company Name: {company_name}
+Unique Selling Proposition: {company_usp or 'Not specified'}
+Key Capabilities: {company_capabilities or 'Multiple service areas'}
+Experience: {company_experience or 'Established track record'}
+Industry Focus: {company_industry or 'Multiple industries'}
+
+Use the company's actual USP and experience when positioning them as the best choice.
+"""
+    else:
+        company_name = "Our Company"
+
     if not usp_text:
         usp_text = "- Industry expertise\n- Proven methodology\n- Client success"
 
     prompt = f"""Write a 'Why Us' section that positions {company_name} as the best choice.
-
-Company: {company_name}
+{company_context}
 Estimated Fit to Opportunity: {fit_score}%
 
-Key Differentiators to Highlight:
+Suggested Differentiators to Highlight:
 {usp_text}
 
 This section should:
 1. State your core competitive advantages
-2. Highlight relevant experience (without fabricating certifications or references)
+2. Highlight relevant experience (with actual company background)
 3. Demonstrate industry knowledge
 4. Show understanding of client's business context
 5. Explain your culture and team's commitment
 6. Address longevity and stability as a partner
 7. Connect your capabilities to the client's specific evaluation criteria
 
-Important:
-- Base all claims on actual {company_name} capabilities
-- Suggest positioning strategies without inventing false credentials
-- Focus on how your real strengths match the client's needs
-- Avoid exaggeration or unsupported claims
+IMPORTANT:
+- Base all claims on the actual company capabilities provided
+- Reference the company's actual USP and experience
+- Focus on how their real strengths match the client's needs
+- Be confident but not exaggerated
+- If company is new or lacks experience in an area, position differently (agility, fresh perspective, etc.)
 
 Structure:
 - Opening statement of competitive advantage
-- Experience and track record (with caveats if needed)
+- Experience and track record
 - Methodology and approach
 - Team capabilities
 - Client commitment and support
@@ -206,7 +257,10 @@ Write ONLY this section, no introduction or explanation."""
     return prompt
 
 
-def get_pricing_prompt(analysis_data: dict) -> str:
+def get_pricing_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for pricing positioning section."""
 
     budget_clues = analysis_data.get("budget_clues", {})
@@ -252,7 +306,10 @@ Write ONLY this section, no introduction or explanation."""
     return prompt
 
 
-def get_risk_mitigation_prompt(analysis_data: dict) -> str:
+def get_risk_mitigation_prompt(
+    analysis_data: dict,
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for risk mitigation section."""
 
     risks = analysis_data.get("risks", [])
@@ -305,8 +362,13 @@ Write ONLY this section, no introduction or explanation."""
     return prompt
 
 
-def get_closing_prompt(company_name: str = "Our Company", summary: str = "") -> str:
+def get_closing_prompt(
+    summary: str = "",
+    company: Optional[Dict[str, Any]] = None
+) -> str:
     """Generate prompt for closing statement section."""
+
+    company_name = company.get("name", "Our Company") if company else "Our Company"
 
     prompt = f"""Write a closing statement for a proposal submission.
 

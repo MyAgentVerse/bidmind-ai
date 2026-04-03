@@ -1,5 +1,6 @@
 """Document analysis endpoints."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -9,6 +10,7 @@ from app.schemas.common import SuccessResponse
 from app.utils.response_helpers import create_success_response, MESSAGES
 from app.api.deps import analysis_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["analysis"])
 
 
@@ -17,7 +19,7 @@ async def analyze_document(
     project_id: str,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
-    """Analyze uploaded procurement document."""
+    """Analyze uploaded procurement document with company context if available."""
     try:
         # Verify project exists
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -44,13 +46,18 @@ async def analyze_document(
                 detail="No extracted text found"
             )
 
-        # Run analysis
+        # Run analysis with company context if company_id exists
         try:
+            company_id = project.company_id  # Pass company_id if project has one
             analysis_result = await analysis_service.analyze_document(
                 str(project_id),
                 uploaded_file.extracted_text,
-                db
+                db,
+                company_id=company_id
             )
+
+            if company_id:
+                logger.info(f"Analysis completed with company context for project {project_id}")
 
             return create_success_response(
                 message=MESSAGES["ANALYSIS_COMPLETED"],
@@ -66,6 +73,7 @@ async def analyze_document(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in analyze_document: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["INTERNAL_ERROR"]
@@ -104,6 +112,7 @@ async def get_analysis(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Error in get_analysis: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["DATABASE_ERROR"]

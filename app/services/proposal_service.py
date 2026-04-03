@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
-from app.models import ProposalDraft, AnalysisResult, Project
+from app.models import ProposalDraft, AnalysisResult, Project, Company
 from app.prompts.proposal_prompts import (
     get_cover_letter_prompt,
     get_executive_summary_prompt,
@@ -24,7 +24,7 @@ class ProposalService:
     """
     Service for generating proposal sections using OpenAI.
 
-    Generates all 8 proposal sections based on analysis results.
+    Generates all 8 proposal sections based on analysis results and company profile.
     """
 
     def __init__(self):
@@ -39,10 +39,42 @@ class ProposalService:
         except ImportError:
             raise ImportError("OpenAI library is required. Install with: pip install openai")
 
+    def _get_company_dict(self, company_id: Optional[str], db: Session) -> Optional[Dict[str, Any]]:
+        """
+        Fetch company profile and return as dictionary.
+
+        Args:
+            company_id: The company ID
+            db: Database session
+
+        Returns:
+            Company data dictionary or None
+        """
+        if not company_id:
+            return None
+
+        try:
+            company = db.query(Company).filter(Company.id == company_id).first()
+            if not company:
+                return None
+
+            return {
+                "name": company.name,
+                "description": company.description,
+                "usp": company.unique_selling_proposition,
+                "capabilities": company.key_capabilities,
+                "experience": company.experience,
+                "industry_focus": company.industry_focus,
+            }
+        except Exception as e:
+            logger.warning(f"Could not fetch company data: {str(e)}")
+            return None
+
     async def generate_proposal(
         self,
         project_id: str,
-        db: Session
+        db: Session,
+        company_id: Optional[str] = None
     ) -> ProposalDraft:
         """
         Generate complete proposal draft from analysis results.
@@ -50,6 +82,7 @@ class ProposalService:
         Args:
             project_id: The project ID
             db: Database session
+            company_id: Optional company ID for personalized proposal
 
         Returns:
             ProposalDraft object
@@ -66,6 +99,11 @@ class ProposalService:
 
         if not analysis:
             raise ValueError(f"No analysis results found for project {project_id}")
+
+        # Get company data if available
+        company_data = self._get_company_dict(company_id, db)
+        if company_data:
+            logger.info(f"Using company context for proposal: {company_data['name']}")
 
         # Convert analysis to dict for easier access
         analysis_dict = {
@@ -95,14 +133,14 @@ class ProposalService:
                 risk_mitigation,
                 closing_statement
             ) = await asyncio.gather(
-                self._generate_section(get_cover_letter_prompt(analysis_dict)),
-                self._generate_section(get_executive_summary_prompt(analysis_dict)),
-                self._generate_section(get_understanding_prompt(analysis_dict)),
-                self._generate_section(get_solution_prompt(analysis_dict)),
-                self._generate_section(get_why_us_prompt(analysis_dict)),
-                self._generate_section(get_pricing_prompt(analysis_dict)),
-                self._generate_section(get_risk_mitigation_prompt(analysis_dict)),
-                self._generate_section(get_closing_prompt(summary=analysis_dict.get("opportunity_summary", ""))),
+                self._generate_section(get_cover_letter_prompt(analysis_dict, company_data)),
+                self._generate_section(get_executive_summary_prompt(analysis_dict, company_data)),
+                self._generate_section(get_understanding_prompt(analysis_dict, company_data)),
+                self._generate_section(get_solution_prompt(analysis_dict, company_data)),
+                self._generate_section(get_why_us_prompt(analysis_dict, company_data)),
+                self._generate_section(get_pricing_prompt(analysis_dict, company_data)),
+                self._generate_section(get_risk_mitigation_prompt(analysis_dict, company_data)),
+                self._generate_section(get_closing_prompt(summary=analysis_dict.get("opportunity_summary", ""), company=company_data)),
             )
 
             sections = {
@@ -132,10 +170,12 @@ class ProposalService:
             # Save to database
             db.add(proposal)
 
-            # Update project status
+            # Update project status and company_id if provided
             project = db.query(Project).filter(Project.id == project_id).first()
             if project:
                 project.status = "proposal_generated"
+                if company_id and not project.company_id:
+                    project.company_id = company_id
 
             db.commit()
             logger.info(f"Proposal generation completed for project {project_id}")
@@ -244,7 +284,7 @@ class ProposalService:
         """
         return proposal.to_dict()
 
-    def generate_proposal_background(self, project_id: str) -> None:
+    def generate_proposal_background(self, project_id: str, company_id: Optional[str] = None) -> None:
         """
         Generate proposal in background (for BackgroundTasks).
 
@@ -253,6 +293,7 @@ class ProposalService:
 
         Args:
             project_id: The project ID
+            company_id: Optional company ID for personalized proposal
         """
         from app.core.database import SessionLocal
 
@@ -262,7 +303,7 @@ class ProposalService:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            loop.run_until_complete(self.generate_proposal(project_id, db))
+            loop.run_until_complete(self.generate_proposal(project_id, db, company_id))
             logger.info(f"Background proposal generation completed for {project_id}")
         except Exception as e:
             logger.error(f"Background proposal generation failed for {project_id}: {str(e)}")
