@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"  # Latest GPT-4 Omni model
+    openai_model: str = "gpt-4-turbo"  # Stable production model - change to gpt-3.5-turbo if not available
 
     # File Upload
     upload_dir: str = "uploads"
