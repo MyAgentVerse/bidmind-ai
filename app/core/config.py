@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     allowed_extensions: str = "pdf,docx"
 
     # CORS
-    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    cors_origins: str = "http://localhost:3000,http://localhost:5173,https://*.lovable.dev,https://*.vercel.app,https://localhost:3000"
 
     # Server
     server_host: str = "0.0.0.0"
@@ -50,7 +50,16 @@ class Settings(BaseSettings):
     @property
     def get_cors_origins(self) -> List[str]:
         """Parse CORS origins from comma-separated string."""
-        return [origin.strip() for origin in self.cors_origins.split(",")]
+        origins = [origin.strip() for origin in self.cors_origins.split(",")]
+
+        # In development, allow all origins for easier testing with Lovable
+        if self.environment == "development" or self.debug:
+            return ["*"]
+
+        # For production, return configured origins
+        # Note: Wildcard patterns won't work directly with CORSMiddleware,
+        # but specific origins like https://app.vercel.app will work
+        return origins
 
 
 @lru_cache()
