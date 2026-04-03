@@ -55,7 +55,8 @@ class Company(BaseModel):
     # Relationships
     projects = relationship(
         "Project",
-        back_populates="company"
+        back_populates="company",
+        foreign_keys="Project.company_id"
     )
 
     def __repr__(self):
