@@ -7,6 +7,7 @@ from app.core.logging import setup_logging
 from app.core.database import init_db
 from app.api.routes import (
     health_router,
+    company_router,
     projects_router,
     uploads_router,
     analysis_router,
@@ -66,6 +67,7 @@ async def shutdown_event():
 
 # Register routers
 app.include_router(health_router)
+app.include_router(company_router)
 app.include_router(projects_router)
 app.include_router(uploads_router)
 app.include_router(analysis_router)

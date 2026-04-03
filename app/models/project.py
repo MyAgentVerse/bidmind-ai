@@ -1,6 +1,6 @@
 """Project model representing a bidding opportunity project."""
 
-from sqlalchemy import Column, String, Enum, DateTime
+from sqlalchemy import Column, String, Enum, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
@@ -44,7 +44,15 @@ class Project(BaseModel):
         index=True
     )
 
+    # Foreign key to Company
+    company_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+
     # Relationships
+    company = relationship(
+        "Company",
+        back_populates="projects",
+        foreign_keys=[company_id]
+    )
     uploaded_files = relationship(
         "UploadedFile",
         back_populates="project",
