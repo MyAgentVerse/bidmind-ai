@@ -162,7 +162,7 @@ class ProposalService:
             ValueError: If generation fails
         """
         try:
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 max_tokens=2000,
                 messages=[
@@ -173,7 +173,7 @@ class ProposalService:
                 ]
             )
 
-            return response.content[0].text
+            return response.choices[0].message.content
 
         except Exception as e:
             logger.error(f"Error generating section: {str(e)}")
