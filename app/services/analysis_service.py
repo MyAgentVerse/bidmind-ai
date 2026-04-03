@@ -2,6 +2,7 @@
 
 import logging
 import json
+from datetime import datetime
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
@@ -74,25 +75,45 @@ class AnalysisService:
             # Parse JSON response
             analysis_data = self._parse_analysis_response(response_text)
 
-            # Create analysis result in database
-            analysis_result = AnalysisResult(
-                project_id=project_id,
-                document_type=analysis_data.get("document_type"),
-                opportunity_summary=analysis_data.get("opportunity_summary"),
-                scope_of_work=analysis_data.get("scope_of_work"),
-                mandatory_requirements=analysis_data.get("mandatory_requirements"),
-                deadlines=analysis_data.get("deadlines"),
-                evaluation_criteria=analysis_data.get("evaluation_criteria"),
-                budget_clues=analysis_data.get("budget_clues"),
-                risks=analysis_data.get("risks"),
-                fit_score=analysis_data.get("fit_score"),
-                usp_suggestions=analysis_data.get("usp_suggestions"),
-                pricing_strategy_summary=analysis_data.get("pricing_strategy_summary"),
-                raw_ai_json=analysis_data
-            )
+            # Check if analysis already exists for this project (upsert pattern)
+            existing_analysis = db.query(AnalysisResult).filter(
+                AnalysisResult.project_id == project_id
+            ).first()
 
-            # Save to database
-            db.add(analysis_result)
+            if existing_analysis:
+                # Update existing analysis
+                existing_analysis.document_type = analysis_data.get("document_type")
+                existing_analysis.opportunity_summary = analysis_data.get("opportunity_summary")
+                existing_analysis.scope_of_work = analysis_data.get("scope_of_work")
+                existing_analysis.mandatory_requirements = analysis_data.get("mandatory_requirements")
+                existing_analysis.deadlines = analysis_data.get("deadlines")
+                existing_analysis.evaluation_criteria = analysis_data.get("evaluation_criteria")
+                existing_analysis.budget_clues = analysis_data.get("budget_clues")
+                existing_analysis.risks = analysis_data.get("risks")
+                existing_analysis.fit_score = analysis_data.get("fit_score")
+                existing_analysis.usp_suggestions = analysis_data.get("usp_suggestions")
+                existing_analysis.pricing_strategy_summary = analysis_data.get("pricing_strategy_summary")
+                existing_analysis.raw_ai_json = analysis_data
+                existing_analysis.updated_at = datetime.utcnow()
+                analysis_result = existing_analysis
+            else:
+                # Create new analysis
+                analysis_result = AnalysisResult(
+                    project_id=project_id,
+                    document_type=analysis_data.get("document_type"),
+                    opportunity_summary=analysis_data.get("opportunity_summary"),
+                    scope_of_work=analysis_data.get("scope_of_work"),
+                    mandatory_requirements=analysis_data.get("mandatory_requirements"),
+                    deadlines=analysis_data.get("deadlines"),
+                    evaluation_criteria=analysis_data.get("evaluation_criteria"),
+                    budget_clues=analysis_data.get("budget_clues"),
+                    risks=analysis_data.get("risks"),
+                    fit_score=analysis_data.get("fit_score"),
+                    usp_suggestions=analysis_data.get("usp_suggestions"),
+                    pricing_strategy_summary=analysis_data.get("pricing_strategy_summary"),
+                    raw_ai_json=analysis_data
+                )
+                db.add(analysis_result)
 
             # Update project status
             project = db.query(Project).filter(Project.id == project_id).first()
