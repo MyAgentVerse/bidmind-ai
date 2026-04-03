@@ -1,5 +1,6 @@
 """Proposal service for generating proposal sections."""
 
+import asyncio
 import logging
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -82,40 +83,38 @@ class ProposalService:
         }
 
         try:
-            # Generate each section
-            sections = {}
-
-            sections["cover_letter"] = await self._generate_section(
-                get_cover_letter_prompt(analysis_dict)
+            # Generate all sections in parallel using asyncio.gather()
+            # This reduces total time from ~8x API call duration to ~1x
+            (
+                cover_letter,
+                executive_summary,
+                understanding_of_requirements,
+                proposed_solution,
+                why_us,
+                pricing_positioning,
+                risk_mitigation,
+                closing_statement
+            ) = await asyncio.gather(
+                self._generate_section(get_cover_letter_prompt(analysis_dict)),
+                self._generate_section(get_executive_summary_prompt(analysis_dict)),
+                self._generate_section(get_understanding_prompt(analysis_dict)),
+                self._generate_section(get_solution_prompt(analysis_dict)),
+                self._generate_section(get_why_us_prompt(analysis_dict)),
+                self._generate_section(get_pricing_prompt(analysis_dict)),
+                self._generate_section(get_risk_mitigation_prompt(analysis_dict)),
+                self._generate_section(get_closing_prompt(summary=analysis_dict.get("opportunity_summary", ""))),
             )
 
-            sections["executive_summary"] = await self._generate_section(
-                get_executive_summary_prompt(analysis_dict)
-            )
-
-            sections["understanding_of_requirements"] = await self._generate_section(
-                get_understanding_prompt(analysis_dict)
-            )
-
-            sections["proposed_solution"] = await self._generate_section(
-                get_solution_prompt(analysis_dict)
-            )
-
-            sections["why_us"] = await self._generate_section(
-                get_why_us_prompt(analysis_dict)
-            )
-
-            sections["pricing_positioning"] = await self._generate_section(
-                get_pricing_prompt(analysis_dict)
-            )
-
-            sections["risk_mitigation"] = await self._generate_section(
-                get_risk_mitigation_prompt(analysis_dict)
-            )
-
-            sections["closing_statement"] = await self._generate_section(
-                get_closing_prompt(summary=analysis_dict.get("opportunity_summary", ""))
-            )
+            sections = {
+                "cover_letter": cover_letter,
+                "executive_summary": executive_summary,
+                "understanding_of_requirements": understanding_of_requirements,
+                "proposed_solution": proposed_solution,
+                "why_us": why_us,
+                "pricing_positioning": pricing_positioning,
+                "risk_mitigation": risk_mitigation,
+                "closing_statement": closing_statement,
+            }
 
             # Create proposal draft
             proposal = ProposalDraft(
