@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
-from app.models import ProposalDraft, AnalysisResult, Project, Company
+from app.models import ProposalDraft, AnalysisResult, Project, Company, CompanyWritingPreferences
 from app.prompts.proposal_prompts import (
     get_cover_letter_prompt,
     get_executive_summary_prompt,
@@ -16,6 +16,7 @@ from app.prompts.proposal_prompts import (
     get_risk_mitigation_prompt,
     get_closing_prompt,
 )
+from app.prompts.writing_preferences_helpers import enhance_section_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,36 @@ class ProposalService:
             logger.warning(f"Could not fetch company data: {str(e)}")
             return None
 
+    def _get_writing_preferences(self, company_id: Optional[str], db: Session) -> Optional[Dict[str, Any]]:
+        """
+        Fetch company writing preferences and return as dictionary.
+
+        Args:
+            company_id: The company ID
+            db: Database session
+
+        Returns:
+            Writing preferences dictionary or None
+        """
+        if not company_id:
+            return None
+
+        try:
+            preferences = db.query(CompanyWritingPreferences).filter(
+                CompanyWritingPreferences.company_id == company_id
+            ).first()
+
+            if not preferences:
+                logger.debug(f"No writing preferences found for company {company_id}")
+                return None
+
+            logger.info(f"Using writing preferences for company {company_id}")
+            return preferences.to_dict()
+
+        except Exception as e:
+            logger.warning(f"Could not fetch writing preferences: {str(e)}")
+            return None
+
     async def generate_proposal(
         self,
         project_id: str,
@@ -105,6 +136,11 @@ class ProposalService:
         if company_data:
             logger.info(f"Using company context for proposal: {company_data['name']}")
 
+        # Get writing preferences if available
+        writing_preferences = self._get_writing_preferences(company_id, db)
+        if writing_preferences:
+            logger.info(f"Using writing preferences for company {company_id}")
+
         # Convert analysis to dict for easier access
         analysis_dict = {
             "opportunity_summary": analysis.opportunity_summary,
@@ -123,6 +159,47 @@ class ProposalService:
         try:
             # Generate all sections in parallel using asyncio.gather()
             # This reduces total time from ~8x API call duration to ~1x
+            cover_letter_prompt = enhance_section_prompt(
+                get_cover_letter_prompt(analysis_dict, company_data),
+                "cover_letter",
+                writing_preferences
+            )
+            executive_summary_prompt = enhance_section_prompt(
+                get_executive_summary_prompt(analysis_dict, company_data),
+                "executive_summary",
+                writing_preferences
+            )
+            understanding_prompt = enhance_section_prompt(
+                get_understanding_prompt(analysis_dict, company_data),
+                "understanding_of_requirements",
+                writing_preferences
+            )
+            solution_prompt = enhance_section_prompt(
+                get_solution_prompt(analysis_dict, company_data),
+                "proposed_solution",
+                writing_preferences
+            )
+            why_us_prompt = enhance_section_prompt(
+                get_why_us_prompt(analysis_dict, company_data),
+                "why_us",
+                writing_preferences
+            )
+            pricing_prompt = enhance_section_prompt(
+                get_pricing_prompt(analysis_dict, company_data),
+                "pricing_positioning",
+                writing_preferences
+            )
+            risk_prompt = enhance_section_prompt(
+                get_risk_mitigation_prompt(analysis_dict, company_data),
+                "risk_mitigation",
+                writing_preferences
+            )
+            closing_prompt = enhance_section_prompt(
+                get_closing_prompt(summary=analysis_dict.get("opportunity_summary", ""), company=company_data),
+                "closing_statement",
+                writing_preferences
+            )
+
             (
                 cover_letter,
                 executive_summary,
@@ -133,14 +210,14 @@ class ProposalService:
                 risk_mitigation,
                 closing_statement
             ) = await asyncio.gather(
-                self._generate_section(get_cover_letter_prompt(analysis_dict, company_data)),
-                self._generate_section(get_executive_summary_prompt(analysis_dict, company_data)),
-                self._generate_section(get_understanding_prompt(analysis_dict, company_data)),
-                self._generate_section(get_solution_prompt(analysis_dict, company_data)),
-                self._generate_section(get_why_us_prompt(analysis_dict, company_data)),
-                self._generate_section(get_pricing_prompt(analysis_dict, company_data)),
-                self._generate_section(get_risk_mitigation_prompt(analysis_dict, company_data)),
-                self._generate_section(get_closing_prompt(summary=analysis_dict.get("opportunity_summary", ""), company=company_data)),
+                self._generate_section(cover_letter_prompt),
+                self._generate_section(executive_summary_prompt),
+                self._generate_section(understanding_prompt),
+                self._generate_section(solution_prompt),
+                self._generate_section(why_us_prompt),
+                self._generate_section(pricing_prompt),
+                self._generate_section(risk_prompt),
+                self._generate_section(closing_prompt),
             )
 
             sections = {
