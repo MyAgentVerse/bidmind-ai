@@ -60,7 +60,7 @@ async def analyze_document(
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=MESSAGES["AI_ERROR"]
+                detail=f"Analysis failed: {str(e)}"
             )
 
     except HTTPException:

@@ -152,3 +152,57 @@ async def list_project_files(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["DATABASE_ERROR"]
         )
+
+
+@router.delete("/{project_id}/files/{file_id}", response_model=SuccessResponse)
+async def delete_file(
+    project_id: str,
+    file_id: str,
+    db: Session = Depends(get_db)
+) -> SuccessResponse:
+    """Delete an uploaded file."""
+    try:
+        # Verify project exists
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=MESSAGES["PROJECT_NOT_FOUND"]
+            )
+
+        # Get file
+        uploaded_file = db.query(UploadedFile).filter(
+            UploadedFile.id == file_id,
+            UploadedFile.project_id == project_id
+        ).first()
+
+        if not uploaded_file:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
+            )
+
+        # Delete from storage
+        try:
+            storage_service.delete_file(uploaded_file.file_path)
+        except Exception as e:
+            # Log error but continue with database deletion
+            pass
+
+        # Delete from database
+        db.delete(uploaded_file)
+        db.commit()
+
+        return create_success_response(
+            message="File deleted successfully",
+            data={"file_id": file_id}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=MESSAGES["INTERNAL_ERROR"]
+        )
