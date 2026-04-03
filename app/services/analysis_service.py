@@ -57,7 +57,7 @@ class AnalysisService:
 
         try:
             # Call OpenAI API
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.settings.openai_model,
                 max_tokens=4096,
                 messages=[
@@ -69,7 +69,7 @@ class AnalysisService:
             )
 
             # Extract response text
-            response_text = response.content[0].text
+            response_text = response.choices[0].message.content
 
             # Parse JSON response
             analysis_data = self._parse_analysis_response(response_text)
