@@ -47,7 +47,7 @@ def get_db() -> Session:
         yield db
     except Exception as e:
         db.rollback()
-        logger.error(f"Database session error: {str(e)}")
+        logger.error(f"Database session error: {str(e)}", exc_info=True)
         raise
     finally:
         db.close()
