@@ -51,6 +51,45 @@ async def generate_proposal(
         )
 
 
+@router.post("/{project_id}/proposal", response_model=SuccessResponse)
+async def generate_proposal_endpoint(
+    project_id: str,
+    db: Session = Depends(get_db)
+) -> SuccessResponse:
+    """Generate proposal draft from analysis results."""
+    try:
+        # Verify project exists
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=MESSAGES["PROJECT_NOT_FOUND"]
+            )
+
+        # Run proposal generation
+        try:
+            proposal = await proposal_service.generate_proposal(str(project_id), db)
+
+            return create_success_response(
+                message=MESSAGES["PROPOSAL_GENERATED"],
+                data=ProposalResponse.from_orm(proposal).model_dump()
+            )
+
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=MESSAGES["INTERNAL_ERROR"]
+        )
+
+
 @router.get("/{project_id}/proposal", response_model=SuccessResponse)
 async def get_proposal(
     project_id: str,
