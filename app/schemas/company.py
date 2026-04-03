@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 
 class CompanyBase(BaseModel):
@@ -44,7 +45,7 @@ class CompanyUpdate(BaseModel):
 
 class CompanyResponse(CompanyBase):
     """Schema for company response (includes id and timestamps)."""
-    id: str
+    id: UUID
     created_at: datetime
     updated_at: datetime
 
