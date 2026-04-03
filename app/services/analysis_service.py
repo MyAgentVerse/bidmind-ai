@@ -56,8 +56,8 @@ class AnalysisService:
         prompt = get_analysis_prompt(extracted_text)
 
         try:
-            # Call OpenAI API with structured output
-            response = self.client.beta.messages.create(
+            # Call OpenAI API
+            response = self.client.messages.create(
                 model=self.settings.openai_model,
                 max_tokens=4096,
                 messages=[
@@ -65,8 +65,7 @@ class AnalysisService:
                         "role": "user",
                         "content": prompt
                     }
-                ],
-                betas=["interleaved-thinking-2025-05-14"],  # Optional: for extended thinking
+                ]
             )
 
             # Extract response text
