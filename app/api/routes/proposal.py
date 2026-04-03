@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Project, ProposalDraft
@@ -16,9 +18,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["proposal"])
 
 
+class ProposalRequest(BaseModel):
+    """Request model for proposal generation with optional company_id."""
+    company_id: Optional[str] = None
+
+
 @router.post("/{project_id}/generate-proposal", response_model=SuccessResponse)
 async def generate_proposal(
     project_id: str,
+    request: ProposalRequest,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
     """Generate proposal draft from analysis results with company context."""
@@ -32,8 +40,10 @@ async def generate_proposal(
             )
 
         # Run proposal generation with company context
+        # Use company_id from request body if provided, otherwise from project
+        company_id = request.company_id or project.company_id
+        
         try:
-            company_id = project.company_id  # Pass company_id if project has one
             proposal = await proposal_service.generate_proposal(
                 str(project_id),
                 db,
@@ -67,6 +77,7 @@ async def generate_proposal(
 @router.post("/{project_id}/proposal", response_model=SuccessResponse)
 async def generate_proposal_endpoint(
     project_id: str,
+    request: ProposalRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
@@ -93,7 +104,8 @@ async def generate_proposal_endpoint(
             )
 
         # Start proposal generation in background with company context
-        company_id = project.company_id
+        # Use company_id from request body if provided, otherwise from project
+        company_id = request.company_id or project.company_id
         background_tasks.add_task(
             proposal_service.generate_proposal_background,
             str(project_id),

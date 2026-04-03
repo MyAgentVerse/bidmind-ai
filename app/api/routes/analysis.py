@@ -1,7 +1,9 @@
 """Document analysis endpoints."""
 
 import logging
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Project, UploadedFile, AnalysisResult
@@ -14,9 +16,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects", tags=["analysis"])
 
 
+class AnalyzeRequest(BaseModel):
+    """Request model for document analysis with optional company_id."""
+    company_id: Optional[str] = None
+
+
 @router.post("/{project_id}/analyze", response_model=SuccessResponse)
 async def analyze_document(
     project_id: str,
+    request: AnalyzeRequest,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
     """Analyze uploaded procurement document with company context if available."""
@@ -46,9 +54,11 @@ async def analyze_document(
                 detail="No extracted text found"
             )
 
-        # Run analysis with company context if company_id exists
+        # Run analysis with company context
+        # Use company_id from request body if provided, otherwise from project
+        company_id = request.company_id or project.company_id
+        
         try:
-            company_id = project.company_id  # Pass company_id if project has one
             analysis_result = await analysis_service.analyze_document(
                 str(project_id),
                 uploaded_file.extracted_text,
