@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+psycopg2://postgres:password@localhost:5432/bidmind_ai"
 
+    # Security
+    secret_key: str = "your-secret-key-change-in-production-min-32-chars"  # Change in production!
+
     # OpenAI
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini" # Fast, affordable, and widely available

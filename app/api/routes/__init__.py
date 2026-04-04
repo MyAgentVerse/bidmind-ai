@@ -21,3 +21,6 @@ __all__ = [
     "ai_edit_router",
     "export_router",
 ]
+from .auth import router as auth_router
+
+__all__.append("auth_router")
