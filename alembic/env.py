@@ -1,5 +1,4 @@
 """Alembic environment configuration."""
-
 from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
@@ -18,20 +17,18 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set sqlalchemy.url from environment if not configured
-if not config.get_section('sqlalchemy').get('sqlalchemy.url'):
+sqlalchemy_section = config.get_section('sqlalchemy')
+if sqlalchemy_section is None or not sqlalchemy_section.get('sqlalchemy.url'):
     from app.core.config import get_settings
     settings = get_settings()
     config.set_main_option('sqlalchemy.url', settings.database_url)
 
 # Add models
 from app.db.base import Base
-
 target_metadata = Base.metadata
-
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -43,10 +40,8 @@ def run_migrations_offline() -> None:
     with context.begin_transaction():
         context.run_migrations()
 
-
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-
     configuration = config.get_section(config.config_ini_section)
     configuration["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url")
 
@@ -63,7 +58,6 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
-
 
 if context.is_offline_mode():
     run_migrations_offline()
