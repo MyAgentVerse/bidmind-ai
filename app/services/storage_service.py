@@ -6,7 +6,6 @@ import uuid
 from pathlib import Path
 from typing import Optional, Tuple
 from app.core.config import get_settings
-from app.core.security import SecurityUtils
 
 logger = logging.getLogger(__name__)
 
