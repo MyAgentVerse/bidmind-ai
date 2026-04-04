@@ -1,6 +1,8 @@
 """Authentication routes for login, signup, and token refresh."""
 
 import logging
+import secrets
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -319,4 +321,161 @@ async def get_current_user_info(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get user information"
+        )
+
+
+@router.post("/logout", response_model=dict)
+async def logout(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout the current user. Frontend should clear tokens from localStorage.
+
+    Args:
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        Logout confirmation message
+    """
+    try:
+        logger.info(f"User logout: {current_user.email}")
+        return {
+            "message": "Successfully logged out",
+            "success": True
+        }
+
+    except Exception as e:
+        logger.error(f"Logout error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Logout failed"
+        )
+
+
+@router.post("/forgot-password", response_model=dict)
+async def forgot_password(
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Request a password reset token. Returns reset token (in production, send via email).
+
+    Args:
+        request: Dict with 'email' field
+        db: Database session
+
+    Returns:
+        Reset token and message
+    """
+    try:
+        email = request.get("email")
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is required"
+            )
+
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            # Return success even if user doesn't exist (security best practice)
+            logger.info(f"Password reset requested for non-existent user: {email}")
+            return {
+                "message": "If account exists, password reset link has been sent",
+                "success": True
+            }
+
+        # Generate reset token (valid for 1 hour)
+        reset_token = secrets.token_urlsafe(32)
+        user.reset_token = reset_token
+        user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
+        db.commit()
+
+        logger.info(f"Password reset token generated for: {email}")
+
+        return {
+            "message": "Password reset link has been sent to your email",
+            "reset_token": reset_token,  # In production, don't return this - send via email
+            "success": True
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Forgot password error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password reset request failed"
+        )
+
+
+@router.post("/reset-password", response_model=dict)
+async def reset_password(
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Reset password using a valid reset token.
+
+    Args:
+        request: Dict with 'reset_token' and 'new_password' fields
+        db: Database session
+
+    Returns:
+        Success message
+    """
+    try:
+        reset_token = request.get("reset_token")
+        new_password = request.get("new_password")
+
+        if not reset_token or not new_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reset token and new password are required"
+            )
+
+        if len(new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters"
+            )
+
+        # Find user by reset token
+        user = db.query(User).filter(User.reset_token == reset_token).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid reset token"
+            )
+
+        # Check if token is expired
+        if user.reset_token_expiry < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reset token has expired"
+            )
+
+        # Update password
+        user.password_hash = password_manager.hash_password(new_password)
+        user.reset_token = None
+        user.reset_token_expiry = None
+        db.commit()
+
+        logger.info(f"Password reset successful for: {user.email}")
+
+        return {
+            "message": "Password has been reset successfully",
+            "success": True
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Reset password error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password reset failed"
         )

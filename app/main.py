@@ -8,9 +8,12 @@ from app.core.database import init_db
 from app.api.routes import (
     health_router,
     auth_router,
+    users_router,
+    organizations_router,
     company_router,
     writing_preferences_router,
     projects_router,
+    projects_v2_router,
     uploads_router,
     analysis_router,
     proposal_router,
@@ -70,9 +73,12 @@ async def shutdown_event():
 # Register routers
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(organizations_router)
 app.include_router(company_router)
 app.include_router(writing_preferences_router)
 app.include_router(projects_router)
+app.include_router(projects_v2_router)
 app.include_router(uploads_router)
 app.include_router(analysis_router)
 app.include_router(proposal_router)
