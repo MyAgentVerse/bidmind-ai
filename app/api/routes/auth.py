@@ -84,8 +84,8 @@ async def signup(
         db.refresh(user)
 
         # Generate tokens
-        access_token = token_manager.create_access_token(user.id)
-        refresh_token = token_manager.create_refresh_token(user.id)
+        access_token = token_manager.create_access_token(str(user.id))
+        refresh_token = token_manager.create_refresh_token(str(user.id))
         expires_in = token_manager.get_token_expiry()
 
         logger.info(f"New user created: {user.email}")
@@ -169,8 +169,8 @@ async def login(
         db.refresh(user)
 
         # Generate tokens
-        access_token = token_manager.create_access_token(user.id)
-        refresh_token = token_manager.create_refresh_token(user.id)
+        access_token = token_manager.create_access_token(str(user.id))
+        refresh_token = token_manager.create_refresh_token(str(user.id))
         expires_in = token_manager.get_token_expiry()
 
         logger.info(f"User login: {user.email}")
@@ -250,7 +250,7 @@ async def refresh_token(
             )
 
         # Generate new access token
-        access_token = token_manager.create_access_token(user.id)
+        access_token = token_manager.create_access_token(str(user.id))
         expires_in = token_manager.get_token_expiry()
 
         logger.info(f"Token refreshed for user: {user.email}")
