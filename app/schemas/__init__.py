@@ -7,6 +7,14 @@ from .analysis import AnalysisResponse
 from .proposal import ProposalResponse, ProposalUpdate, ProposalSectionUpdate
 from .ai_edit import AIEditRequest, AIEditResponse
 from .export import ExportDocxResponse
+from .auth import (
+    SignupRequest,
+    LoginRequest,
+    TokenResponse,
+    RefreshTokenRequest,
+    UserResponse,
+    OrganizationResponse,
+)
 
 __all__ = [
     "SuccessResponse",
@@ -22,4 +30,10 @@ __all__ = [
     "AIEditRequest",
     "AIEditResponse",
     "ExportDocxResponse",
+    "SignupRequest",
+    "LoginRequest",
+    "TokenResponse",
+    "RefreshTokenRequest",
+    "UserResponse",
+    "OrganizationResponse",
 ]
