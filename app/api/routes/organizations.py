@@ -253,6 +253,56 @@ async def update_organization(
         )
 
 
+@router.get("/{org_id}/members", response_model=dict)
+async def list_members(
+    org_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List all members of an organization.
+
+    Args:
+        org_id: Organization ID
+
+    Returns:
+        List of members with their roles
+    """
+    try:
+        check_org_access(current_user, org_id, db)
+
+        # Get all members in organization
+        user_orgs = db.query(UserOrganization).filter(
+            UserOrganization.organization_id == org_id
+        ).all()
+
+        members = []
+        for uo in user_orgs:
+            user = db.query(User).filter(User.id == uo.user_id).first()
+            if user:
+                members.append({
+                    "id": str(user.id),
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "role": uo.role,
+                    "joined_at": uo.created_at.isoformat()
+                })
+
+        return {
+            "members": members,
+            "count": len(members)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing members: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list members"
+        )
+
+
 @router.post("/{org_id}/members", response_model=dict)
 async def add_member(
     org_id: str,
