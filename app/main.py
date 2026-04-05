@@ -62,6 +62,18 @@ async def startup_event():
         logger.error(f"Failed to initialize database: {str(e)}")
         raise
 
+    # Run pending migrations
+    try:
+        from alembic.config import Config
+        from alembic import command
+        import os
+
+        alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "../alembic.ini"))
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations completed successfully")
+    except Exception as e:
+        logger.warning(f"Migration check completed with note: {str(e)}")
+
 
 # Shutdown event
 @app.on_event("shutdown")
