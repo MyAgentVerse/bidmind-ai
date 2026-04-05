@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.models import User, Organization, UserOrganization
+from app.models import User, Organization, UserOrganization, OrganizationInvite
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/organizations", tags=["organizations"])
@@ -502,4 +502,169 @@ async def remove_member(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to remove member"
+        )
+
+
+# ============================================================================
+# INVITE CODE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+
+@router.post("/{org_id}/invite-codes", response_model=dict)
+async def generate_invite_code(
+    org_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate a new invite code for organization. Requires admin role.
+
+    Args:
+        org_id: Organization ID
+        current_user: Current authenticated user
+
+    Returns:
+        Generated invite code details
+    """
+    try:
+        check_org_access(current_user, org_id, db, required_role="admin")
+
+        # Generate unique code
+        code = OrganizationInvite.generate_code()
+
+        # Create invite
+        invite = OrganizationInvite(
+            organization_id=org_id,
+            created_by=current_user.id,
+            code=code,
+            role="member"  # Default role for invited users
+        )
+
+        db.add(invite)
+        db.commit()
+        db.refresh(invite)
+
+        logger.info(f"Invite code generated for org {org_id}: {code}")
+
+        return {
+            "code": invite.code,
+            "organization_id": str(invite.organization_id),
+            "role": invite.role,
+            "created_at": invite.created_at.isoformat(),
+            "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+            "message": "Invite code generated successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error generating invite code: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate invite code"
+        )
+
+
+@router.get("/{org_id}/invite-codes", response_model=dict)
+async def list_invite_codes(
+    org_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    List all invite codes for organization. Requires admin role.
+
+    Args:
+        org_id: Organization ID
+        current_user: Current authenticated user
+
+    Returns:
+        List of invite codes
+    """
+    try:
+        check_org_access(current_user, org_id, db, required_role="admin")
+
+        invites = db.query(OrganizationInvite).filter(
+            OrganizationInvite.organization_id == org_id
+        ).all()
+
+        return {
+            "invite_codes": [
+                {
+                    "id": str(invite.id),
+                    "code": invite.code,
+                    "role": invite.role,
+                    "is_active": bool(invite.is_active),
+                    "used_count": invite.used_count,
+                    "max_uses": invite.max_uses,
+                    "created_at": invite.created_at.isoformat(),
+                    "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+                    "created_by": str(invite.created_by) if invite.created_by else None
+                }
+                for invite in invites
+            ],
+            "total": len(invites)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing invite codes: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list invite codes"
+        )
+
+
+@router.delete("/{org_id}/invite-codes/{code_id}", response_model=dict)
+async def revoke_invite_code(
+    org_id: str,
+    code_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Revoke an invite code. Requires admin role.
+
+    Args:
+        org_id: Organization ID
+        code_id: Invite code ID
+
+    Returns:
+        Success message
+    """
+    try:
+        check_org_access(current_user, org_id, db, required_role="admin")
+
+        invite = db.query(OrganizationInvite).filter(
+            OrganizationInvite.id == code_id,
+            OrganizationInvite.organization_id == org_id
+        ).first()
+
+        if not invite:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invite code not found"
+            )
+
+        invite.is_active = 0
+        db.add(invite)
+        db.commit()
+
+        logger.info(f"Invite code revoked: {invite.code}")
+
+        return {
+            "message": "Invite code revoked successfully",
+            "success": True
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error revoking invite code: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke invite code"
         )

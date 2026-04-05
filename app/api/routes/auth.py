@@ -25,20 +25,25 @@ router = APIRouter(prefix="/api/auth", tags=["authentication"])
 @router.post("/signup", response_model=dict)
 async def signup(
     request: SignupRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    invite_code: str = None
 ):
     """
-    Create a new user account with optional organization.
+    Create a new user account with personal organization.
+
+    Auto-creates a personal organization for the user.
+    If invite_code is provided, also adds user to that organization.
 
     Args:
         request: Signup details (email, full_name, password, organization_name)
         db: Database session
+        invite_code: Optional invite code to join an organization
 
     Returns:
-        User info and authentication tokens
+        User info, personal org, and authentication tokens
 
     Raises:
-        HTTPException: If email already exists
+        HTTPException: If email already exists or invite code is invalid
     """
     try:
         # Check if user already exists
@@ -64,23 +69,69 @@ async def signup(
         db.add(user)
         db.flush()  # Get user ID without committing
 
-        # Create organization if provided
-        organization = None
+        # Always create personal organization for the user
+        personal_org_name = f"{request.full_name}'s Workspace"
+        personal_org = Organization(
+            name=personal_org_name,
+            description="Personal workspace"
+        )
+        db.add(personal_org)
+        db.flush()
+
+        # Link user to personal organization as owner
+        user_org = UserOrganization(
+            user_id=user.id,
+            organization_id=personal_org.id,
+            role="owner"
+        )
+        db.add(user_org)
+
+        # If organization_name is provided, create additional organization
+        invited_org = None
         if request.organization_name:
-            organization = Organization(
+            invited_org = Organization(
                 name=request.organization_name,
                 description=""
             )
-            db.add(organization)
+            db.add(invited_org)
             db.flush()
 
-            # Link user to organization as owner
-            user_org = UserOrganization(
+            # Link user to this organization as owner
+            user_org_invited = UserOrganization(
                 user_id=user.id,
-                organization_id=organization.id,
+                organization_id=invited_org.id,
                 role="owner"
             )
-            db.add(user_org)
+            db.add(user_org_invited)
+
+        # Handle invite code if provided
+        if invite_code:
+            from app.models import OrganizationInvite
+            invite = db.query(OrganizationInvite).filter(
+                OrganizationInvite.code == invite_code
+            ).first()
+
+            if not invite or not invite.is_valid():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid or expired invite code"
+                )
+
+            # Add user to invited organization
+            if not db.query(UserOrganization).filter(
+                UserOrganization.user_id == user.id,
+                UserOrganization.organization_id == invite.organization_id
+            ).first():
+                user_org_from_invite = UserOrganization(
+                    user_id=user.id,
+                    organization_id=invite.organization_id,
+                    role=invite.role
+                )
+                db.add(user_org_from_invite)
+
+                # Update invite usage
+                invite.used_count += 1
+                db.add(invite)
 
         db.commit()
         db.refresh(user)
@@ -90,7 +141,7 @@ async def signup(
         refresh_token = token_manager.create_refresh_token(str(user.id))
         expires_in = token_manager.get_token_expiry()
 
-        logger.info(f"New user created: {user.email}")
+        logger.info(f"New user created: {user.email} with personal org: {personal_org.name}")
 
         return {
             "user": {
@@ -100,10 +151,14 @@ async def signup(
                 "is_active": user.is_active,
                 "is_verified": user.is_verified
             },
-            "organization": {
-                "id": str(organization.id),
-                "name": organization.name
-            } if organization else None,
+            "personal_organization": {
+                "id": str(personal_org.id),
+                "name": personal_org.name
+            },
+            "invited_organization": {
+                "id": str(invited_org.id),
+                "name": invited_org.name
+            } if invited_org else None,
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
@@ -474,4 +529,94 @@ async def reset_password(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Password reset failed"
+        )
+
+
+@router.post("/join-organization", response_model=dict)
+async def join_organization_with_invite(
+    invite_code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Accept an invite code and join an organization.
+
+    For existing users to join organizations via invite code.
+
+    Args:
+        invite_code: Invite code from email/share
+        current_user: Current authenticated user
+        db: Database session
+
+    Returns:
+        Organization info and success message
+
+    Raises:
+        HTTPException: If invite code is invalid or user already in org
+    """
+    try:
+        from app.models import OrganizationInvite
+
+        # Find and validate invite
+        invite = db.query(OrganizationInvite).filter(
+            OrganizationInvite.code == invite_code
+        ).first()
+
+        if not invite or not invite.is_valid():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired invite code"
+            )
+
+        # Check if user already in organization
+        existing_member = db.query(UserOrganization).filter(
+            UserOrganization.user_id == current_user.id,
+            UserOrganization.organization_id == invite.organization_id
+        ).first()
+
+        if existing_member:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You are already a member of this organization"
+            )
+
+        # Add user to organization
+        user_org = UserOrganization(
+            user_id=current_user.id,
+            organization_id=invite.organization_id,
+            role=invite.role
+        )
+        db.add(user_org)
+
+        # Update invite usage
+        invite.used_count += 1
+        db.add(invite)
+        db.commit()
+
+        # Get organization details
+        org = db.query(Organization).filter(
+            Organization.id == invite.organization_id
+        ).first()
+
+        logger.info(f"User {current_user.email} joined organization {org.name} via invite")
+
+        return {
+            "message": f"Successfully joined {org.name}",
+            "success": True,
+            "organization": {
+                "id": str(org.id),
+                "name": org.name,
+                "description": org.description,
+                "role": invite.role
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Join organization error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to join organization"
         )

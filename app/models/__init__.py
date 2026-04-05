@@ -5,6 +5,7 @@ from .company_writing_preferences import CompanyWritingPreferences
 from .user import User
 from .organization import Organization
 from .user_organization import UserOrganization
+from .organization_invite import OrganizationInvite
 from .project import Project
 from .uploaded_file import UploadedFile
 from .analysis_result import AnalysisResult
@@ -17,6 +18,7 @@ __all__ = [
     "User",
     "Organization",
     "UserOrganization",
+    "OrganizationInvite",
     "Project",
     "UploadedFile",
     "AnalysisResult",
