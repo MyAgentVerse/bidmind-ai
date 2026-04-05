@@ -44,14 +44,20 @@ class Project(BaseModel):
         index=True
     )
 
-    # Foreign key to Company
+    # Foreign keys
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True)
 
     # Relationships
     company = relationship(
         "Company",
         back_populates="projects",
         foreign_keys=[company_id]
+    )
+    organization = relationship(
+        "Organization",
+        back_populates="projects",
+        foreign_keys=[organization_id]
     )
     uploaded_files = relationship(
         "UploadedFile",

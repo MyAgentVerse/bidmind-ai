@@ -35,6 +35,11 @@ class Organization(BaseModel):
         back_populates="organization",
         cascade="all, delete-orphan"
     )
+    projects = relationship(
+        "Project",
+        back_populates="organization",
+        cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Organization(id={self.id}, name={self.name})>"

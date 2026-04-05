@@ -86,25 +86,8 @@ async def signup(
         )
         db.add(user_org)
 
-        # If organization_name is provided, create additional organization
+        # Handle invite code if provided (query parameter)
         invited_org = None
-        if request.organization_name:
-            invited_org = Organization(
-                name=request.organization_name,
-                description=""
-            )
-            db.add(invited_org)
-            db.flush()
-
-            # Link user to this organization as owner
-            user_org_invited = UserOrganization(
-                user_id=user.id,
-                organization_id=invited_org.id,
-                role="owner"
-            )
-            db.add(user_org_invited)
-
-        # Handle invite code if provided
         if invite_code:
             from app.models import OrganizationInvite
             invite = db.query(OrganizationInvite).filter(
@@ -118,20 +101,23 @@ async def signup(
                 )
 
             # Add user to invited organization
-            if not db.query(UserOrganization).filter(
-                UserOrganization.user_id == user.id,
-                UserOrganization.organization_id == invite.organization_id
-            ).first():
-                user_org_from_invite = UserOrganization(
-                    user_id=user.id,
-                    organization_id=invite.organization_id,
-                    role=invite.role
-                )
-                db.add(user_org_from_invite)
+            user_org_from_invite = UserOrganization(
+                user_id=user.id,
+                organization_id=invite.organization_id,
+                role=invite.role
+            )
+            db.add(user_org_from_invite)
 
-                # Update invite usage
-                invite.used_count += 1
-                db.add(invite)
+            # Update invite usage
+            invite.used_count += 1
+            db.add(invite)
+
+            # Get the invited organization details for response
+            invited_org = db.query(Organization).filter(
+                Organization.id == invite.organization_id
+            ).first()
+
+            logger.info(f"User {user.email} joined organization {invited_org.name} via invite code")
 
         db.commit()
         db.refresh(user)
