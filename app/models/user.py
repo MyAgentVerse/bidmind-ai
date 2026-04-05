@@ -30,10 +30,6 @@ class User(BaseModel):
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
 
-    # Password reset
-    reset_token = Column(String(255), nullable=True, unique=True)
-    reset_token_expiry = Column(DateTime, nullable=True)
-
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
