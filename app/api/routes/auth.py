@@ -325,6 +325,7 @@ async def get_current_user_info(
 
 
 @router.post("/logout", response_model=dict)
+@router.delete("/logout", response_model=dict)
 async def logout(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
