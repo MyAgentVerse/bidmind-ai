@@ -9,14 +9,14 @@ from datetime import datetime
 from uuid import UUID
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.proposal_generation import ProposalGeneration
 from app.models.proposal_feedback import ProposalFeedback
 from app.models.proposal_preferences import ProposalPreferences
 from app.models.proposal_learnings import ProposalLearnings
-from app.api.deps import check_org_access
+from app.api.routes.organizations import check_org_access
 from app.services.proposal_analytics import ProposalAnalyticsService
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -30,7 +30,7 @@ async def get_proposal_preferences(
     db: Session = Depends(get_db)
 ):
     """Get organization's proposal writing preferences"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     prefs = db.query(ProposalPreferences).filter(
         ProposalPreferences.organization_id == org_id
@@ -63,7 +63,7 @@ async def update_proposal_preferences(
     db: Session = Depends(get_db)
 ):
     """Update organization's proposal writing preferences"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     prefs = db.query(ProposalPreferences).filter(
         ProposalPreferences.organization_id == org_id
@@ -100,7 +100,7 @@ async def create_proposal(
     db: Session = Depends(get_db)
 ):
     """Create a new AI-generated proposal"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     proposal = ProposalGeneration(
         organization_id=org_id,
@@ -129,7 +129,7 @@ async def list_proposals(
     db: Session = Depends(get_db)
 ):
     """List all proposals for organization"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     proposals = db.query(ProposalGeneration).filter(
         ProposalGeneration.organization_id == org_id
@@ -295,7 +295,7 @@ async def get_proposal_analytics(
     db: Session = Depends(get_db)
 ):
     """Get AI learning analytics for organization"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     learnings = db.query(ProposalLearnings).filter(
         ProposalLearnings.organization_id == org_id
@@ -324,7 +324,7 @@ async def get_feedback_history(
     db: Session = Depends(get_db)
 ):
     """Get recent feedback entries for organization"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     feedback_list = db.query(ProposalFeedback).filter(
         ProposalFeedback.organization_id == org_id
@@ -340,7 +340,7 @@ async def recalculate_analytics(
     db: Session = Depends(get_db)
 ):
     """Recalculate all analytics for organization (manual trigger)"""
-    await check_org_access(org_id, current_user, db)
+    check_org_access(current_user, str(org_id), db)
 
     analytics_service = ProposalAnalyticsService(db)
     await analytics_service.update_learnings(org_id)
