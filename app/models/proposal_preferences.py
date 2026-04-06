@@ -9,10 +9,10 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
-from app.database import Base
+from app.db.base import BaseModel
 
 
-class ProposalPreferences(Base):
+class ProposalPreferences(BaseModel):
     """
     Organization-level proposal preferences.
     Stores all the settings from the Lovable Writing Preferences UI.

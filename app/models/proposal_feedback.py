@@ -9,10 +9,10 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
-from app.database import Base
+from app.db.base import BaseModel
 
 
-class ProposalFeedback(Base):
+class ProposalFeedback(BaseModel):
     """
     Stores feedback from users on AI-generated proposals.
     This is the core of the feedback loop for AI learning.

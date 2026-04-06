@@ -9,10 +9,10 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
-from app.database import Base
+from app.db.base import BaseModel
 
 
-class ProposalLearnings(Base):
+class ProposalLearnings(BaseModel):
     """
     Aggregated feedback analytics for each organization.
     Stores what the AI has learned from accumulated feedback.
