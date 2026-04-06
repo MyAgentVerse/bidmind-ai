@@ -3,11 +3,12 @@ ProposalFeedback Model
 Stores user feedback on generated proposals
 """
 
+from datetime import datetime
+import uuid
+
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from datetime import datetime
-import uuid
 
 from app.db.base import BaseModel
 
@@ -20,41 +21,58 @@ class ProposalFeedback(BaseModel):
     __tablename__ = "proposal_feedback"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    proposal_id = Column(UUID(as_uuid=True), ForeignKey("proposal_generations.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("proposal_generations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
     # Feedback content
     rating = Column(String, nullable=False)  # "love", "okay", "not_right"
-    feedback_text = Column(Text, nullable=True)  # "Pricing too high", "Timeline needs 4 phases", etc.
+    feedback_text = Column(Text, nullable=True)
 
     # Feedback tags (user can select multiple)
-    feedback_tags = Column(JSONB, nullable=True)  # [
-                                                  #   "pricing_high",
-                                                  #   "timeline_aggressive",
-                                                  #   "tone_formal",
-                                                  #   "missing_case_studies",
-                                                  #   ...
-                                                  # ]
+    feedback_tags = Column(JSONB, nullable=True)
 
     # Action taken with feedback
     action_taken = Column(String, nullable=True)  # "saved", "regenerated", "ignored"
-    regenerated_proposal_id = Column(UUID(as_uuid=True), ForeignKey("proposal_generations.id", ondelete="SET NULL"), nullable=True)
+    regenerated_proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("proposal_generations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Metadata
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     organization = relationship("Organization")
-    proposal = relationship("ProposalGeneration", foreign_keys=[proposal_id], back_populates="feedback")
-    regenerated_proposal = relationship("ProposalGeneration", foreign_keys=[regenerated_proposal_id])
+    proposal = relationship(
+        "ProposalGeneration",
+        foreign_keys=[proposal_id],
+        back_populates="feedback",
+    )
+    regenerated_proposal = relationship(
+        "ProposalGeneration",
+        foreign_keys=[regenerated_proposal_id],
+    )
     created_by_user = relationship("User")
 
     # Indexes
     __table_args__ = (
-        Index('idx_proposal_feedback', 'proposal_id'),
-        Index('idx_org_feedback', 'organization_id', 'created_at'),
-        Index('idx_feedback_created_by', 'created_by'),
+        Index("idx_proposal_feedback", "proposal_id"),
+        Index("idx_org_feedback", "organization_id", "created_at"),
+        Index("idx_feedback_created_by", "created_by"),
     )
 
     def to_dict(self):
@@ -71,3 +89,4 @@ class ProposalFeedback(BaseModel):
             "created_by": str(self.created_by),
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+        

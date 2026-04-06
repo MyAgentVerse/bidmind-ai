@@ -45,7 +45,11 @@ class ProposalGeneration(BaseModel):
     # Relationships
     organization = relationship("Organization")
     created_by_user = relationship("User")
-    feedback = relationship("ProposalFeedback", back_populates="proposal")
+    feedback = relationship(
+        "ProposalFeedback",
+        back_populates="proposal",
+        foreign_keys="ProposalFeedback.proposal_id"
+    )
     parent_proposal = relationship("ProposalGeneration", remote_side=[id], backref="regenerations")
 
     # Indexes
