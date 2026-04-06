@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.core.database import init_db
@@ -12,7 +13,6 @@ from app.api.routes import (
     organizations_router,
     company_router,
     writing_preferences_router,
-    projects_router,
     projects_v2_router,
     uploads_router,
     analysis_router,
@@ -78,8 +78,12 @@ app.include_router(users_router)
 app.include_router(organizations_router)
 app.include_router(company_router)
 app.include_router(writing_preferences_router)
-app.include_router(projects_router)
+
+# IMPORTANT SECURITY FIX:
+# Only include the authenticated multi-tenant projects router.
+# DO NOT include the legacy insecure projects router.
 app.include_router(projects_v2_router)
+
 app.include_router(uploads_router)
 app.include_router(analysis_router)
 app.include_router(proposal_router)
@@ -109,3 +113,4 @@ if __name__ == "__main__":
         port=settings.server_port,
         reload=settings.debug,
     )
+    
