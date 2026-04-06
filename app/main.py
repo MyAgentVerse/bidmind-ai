@@ -19,6 +19,7 @@ from app.api.routes import (
     proposal_router,
     ai_edit_router,
     export_router,
+    proposals_router,
 )
 
 # Setup logging
@@ -84,6 +85,7 @@ app.include_router(analysis_router)
 app.include_router(proposal_router)
 app.include_router(ai_edit_router)
 app.include_router(export_router)
+app.include_router(proposals_router)
 
 
 # Root endpoint

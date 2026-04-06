@@ -11,6 +11,10 @@ from .uploaded_file import UploadedFile
 from .analysis_result import AnalysisResult
 from .proposal_draft import ProposalDraft
 from .ai_edit_history import AIEditHistory
+from .proposal_preferences import ProposalPreferences
+from .proposal_generation import ProposalGeneration
+from .proposal_feedback import ProposalFeedback
+from .proposal_learnings import ProposalLearnings
 
 __all__ = [
     "Company",
@@ -24,4 +28,8 @@ __all__ = [
     "AnalysisResult",
     "ProposalDraft",
     "AIEditHistory",
+    "ProposalPreferences",
+    "ProposalGeneration",
+    "ProposalFeedback",
+    "ProposalLearnings",
 ]
