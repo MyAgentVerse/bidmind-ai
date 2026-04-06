@@ -606,3 +606,57 @@ async def join_organization_with_invite(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to join organization"
         )
+
+
+@router.get("/me", response_model=dict)
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get current authenticated user info and validate session.
+
+    Frontend calls this to:
+    1. Validate session is active
+    2. Get current user data
+    3. Refresh user info from database
+
+    Returns 401 if token is invalid/expired
+    """
+    try:
+        # Refresh user from database
+        user = db.query(User).filter(User.id == current_user.id).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found"
+            )
+
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is inactive"
+            )
+
+        logger.info(f"Session validated for user: {user.email}")
+
+        return {
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_active": user.is_active,
+                "is_verified": user.is_verified
+            },
+            "success": True
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user info: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user info"
+        )
