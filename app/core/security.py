@@ -41,7 +41,7 @@ class TokenManager:
     def __init__(self):
         self.settings = get_settings()
         self.algorithm = "HS256"
-        self.access_token_expire_minutes = 30
+        self.access_token_expire_minutes = 60  # 1 hour (increased from 30 min)
         self.refresh_token_expire_days = 7
 
     def create_access_token(self, subject: str, expires_delta: Optional[timedelta] = None) -> str:
