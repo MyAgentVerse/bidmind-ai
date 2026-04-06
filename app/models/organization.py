@@ -33,13 +33,22 @@ class Organization(BaseModel):
     users = relationship(
         "UserOrganization",
         back_populates="organization",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
     )
+
     projects = relationship(
         "Project",
         back_populates="organization",
-        cascade="all, delete-orphan"
+        cascade="all, delete-orphan",
+    )
+
+    company_profile = relationship(
+        "Company",
+        back_populates="organization",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self):
         return f"<Organization(id={self.id}, name={self.name})>"
+        

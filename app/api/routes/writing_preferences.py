@@ -1,52 +1,102 @@
-"""Writing preferences management endpoints."""
+"""Tenant-safe writing preferences management endpoints."""
 
 import logging
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
-from app.models import CompanyWritingPreferences, Company
+from app.core.dependencies import get_current_user
+from app.models import Company, CompanyWritingPreferences, Organization, User, UserOrganization
 from app.schemas.writing_preferences import (
     WritingPreferencesCreate,
     WritingPreferencesUpdate,
-    WritingPreferencesResponse
+    WritingPreferencesResponse,
 )
 from app.schemas.common import SuccessResponse
-from app.utils.response_helpers import create_success_response, MESSAGES
+from app.utils.response_helpers import create_success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/companies", tags=["writing_preferences"])
 
 
-@router.post("/{company_id}/writing-preferences", response_model=SuccessResponse)
-async def create_writing_preferences(
-    company_id: str,
-    preferences_data: WritingPreferencesCreate,
-    db: Session = Depends(get_db)
-) -> SuccessResponse:
-    """Create writing preferences for a company."""
-    try:
-        # Verify company exists
-        company = db.query(Company).filter(Company.id == company_id).first()
-        if not company:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
-            )
+def _assert_user_in_org(db: Session, user_id: UUID, organization_id: UUID) -> None:
+    membership = (
+        db.query(UserOrganization)
+        .filter(
+            UserOrganization.user_id == user_id,
+            UserOrganization.organization_id == organization_id,
+        )
+        .first()
+    )
 
-        # Check if preferences already exist
-        existing = db.query(CompanyWritingPreferences).filter(
-            CompanyWritingPreferences.company_id == company_id
-        ).first()
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this organization",
+        )
+
+
+def _get_org_or_404(db: Session, organization_id: UUID) -> Organization:
+    organization = (
+        db.query(Organization)
+        .filter(Organization.id == organization_id)
+        .first()
+    )
+
+    if not organization:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+
+    return organization
+
+
+def _get_company_or_404_by_org(db: Session, organization_id: UUID) -> Company:
+    company = (
+        db.query(Company)
+        .filter(Company.organization_id == organization_id)
+        .first()
+    )
+
+    if not company:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Company profile not found for this organization",
+        )
+
+    return company
+
+
+@router.post("/organization/{organization_id}/writing-preferences", response_model=SuccessResponse)
+async def create_writing_preferences(
+    organization_id: UUID,
+    preferences_data: WritingPreferencesCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SuccessResponse:
+    """Create writing preferences for the selected organization's company profile."""
+    try:
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
+        company = _get_company_or_404_by_org(db, organization_id)
+
+        existing = (
+            db.query(CompanyWritingPreferences)
+            .filter(CompanyWritingPreferences.company_id == company.id)
+            .first()
+        )
 
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Writing preferences already exist for this company. Use PATCH to update."
+                detail="Writing preferences already exist for this organization. Use PATCH to update.",
             )
 
-        # Create new preferences
         preferences = CompanyWritingPreferences(
-            company_id=company_id,
+            company_id=company.id,
             tone_level=preferences_data.tone_level,
             brand_voice_tags=preferences_data.brand_voice_tags,
             language_complexity=preferences_data.language_complexity,
@@ -64,90 +114,89 @@ async def create_writing_preferences(
         db.commit()
         db.refresh(preferences)
 
-        logger.info(f"Writing preferences created for company {company_id}")
+        logger.info(f"Writing preferences created for organization {organization_id}")
 
         return create_success_response(
             message="Writing preferences created successfully",
-            data=WritingPreferencesResponse.from_orm(preferences).model_dump()
+            data=WritingPreferencesResponse.from_orm(preferences).model_dump(),
         )
 
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error creating writing preferences: {str(e)}")
+        logger.error(f"Error creating writing preferences for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create writing preferences: {str(e)}"
+            detail=f"Failed to create writing preferences: {str(e)}",
         )
 
 
-@router.get("/{company_id}/writing-preferences", response_model=SuccessResponse)
+@router.get("/organization/{organization_id}/writing-preferences", response_model=SuccessResponse)
 async def get_writing_preferences(
-    company_id: str,
-    db: Session = Depends(get_db)
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Get writing preferences for a company."""
+    """Get writing preferences for the selected organization's company profile."""
     try:
-        # Verify company exists
-        company = db.query(Company).filter(Company.id == company_id).first()
-        if not company:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
-            )
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
+        company = _get_company_or_404_by_org(db, organization_id)
 
-        preferences = db.query(CompanyWritingPreferences).filter(
-            CompanyWritingPreferences.company_id == company_id
-        ).first()
+        preferences = (
+            db.query(CompanyWritingPreferences)
+            .filter(CompanyWritingPreferences.company_id == company.id)
+            .first()
+        )
 
         if not preferences:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Writing preferences not found for this company"
+                detail="Writing preferences not found for this organization",
             )
 
         return create_success_response(
             message="Writing preferences retrieved successfully",
-            data=WritingPreferencesResponse.from_orm(preferences).model_dump()
+            data=WritingPreferencesResponse.from_orm(preferences).model_dump(),
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving writing preferences: {str(e)}")
+        logger.error(f"Error retrieving writing preferences for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve writing preferences: {str(e)}"
+            detail=f"Failed to retrieve writing preferences: {str(e)}",
         )
 
 
-@router.patch("/{company_id}/writing-preferences", response_model=SuccessResponse)
+@router.patch("/organization/{organization_id}/writing-preferences", response_model=SuccessResponse)
 async def update_writing_preferences(
-    company_id: str,
+    organization_id: UUID,
     preferences_data: WritingPreferencesUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Update writing preferences for a company."""
+    """Update writing preferences for the selected organization's company profile."""
     try:
-        # Verify company exists
-        company = db.query(Company).filter(Company.id == company_id).first()
-        if not company:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
-            )
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
+        company = _get_company_or_404_by_org(db, organization_id)
 
-        preferences = db.query(CompanyWritingPreferences).filter(
-            CompanyWritingPreferences.company_id == company_id
-        ).first()
+        preferences = (
+            db.query(CompanyWritingPreferences)
+            .filter(CompanyWritingPreferences.company_id == company.id)
+            .first()
+        )
 
         if not preferences:
-            # If doesn't exist, create with defaults first
-            preferences = CompanyWritingPreferences(company_id=company_id)
-            db.add(preferences)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Writing preferences not found for this organization",
+            )
 
-        # Update only provided fields
         update_data = preferences_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(preferences, field, value)
@@ -155,11 +204,11 @@ async def update_writing_preferences(
         db.commit()
         db.refresh(preferences)
 
-        logger.info(f"Writing preferences updated for company {company_id}")
+        logger.info(f"Writing preferences updated for organization {organization_id}")
 
         return create_success_response(
             message="Writing preferences updated successfully",
-            data=WritingPreferencesResponse.from_orm(preferences).model_dump()
+            data=WritingPreferencesResponse.from_orm(preferences).model_dump(),
         )
 
     except HTTPException:
@@ -167,45 +216,44 @@ async def update_writing_preferences(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error updating writing preferences: {str(e)}")
+        logger.error(f"Error updating writing preferences for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update writing preferences: {str(e)}"
+            detail=f"Failed to update writing preferences: {str(e)}",
         )
 
 
-@router.delete("/{company_id}/writing-preferences", response_model=SuccessResponse)
+@router.delete("/organization/{organization_id}/writing-preferences", response_model=SuccessResponse)
 async def delete_writing_preferences(
-    company_id: str,
-    db: Session = Depends(get_db)
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Delete writing preferences for a company."""
+    """Delete writing preferences for the selected organization's company profile."""
     try:
-        # Verify company exists
-        company = db.query(Company).filter(Company.id == company_id).first()
-        if not company:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
-            )
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
+        company = _get_company_or_404_by_org(db, organization_id)
 
-        preferences = db.query(CompanyWritingPreferences).filter(
-            CompanyWritingPreferences.company_id == company_id
-        ).first()
+        preferences = (
+            db.query(CompanyWritingPreferences)
+            .filter(CompanyWritingPreferences.company_id == company.id)
+            .first()
+        )
 
         if not preferences:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Writing preferences not found for this company"
+                detail="Writing preferences not found for this organization",
             )
 
         db.delete(preferences)
         db.commit()
 
-        logger.info(f"Writing preferences deleted for company {company_id}")
+        logger.info(f"Writing preferences deleted for organization {organization_id}")
 
         return create_success_response(
-            message="Writing preferences deleted successfully"
+            message="Writing preferences deleted successfully",
         )
 
     except HTTPException:
@@ -213,8 +261,9 @@ async def delete_writing_preferences(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error deleting writing preferences: {str(e)}")
+        logger.error(f"Error deleting writing preferences for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete writing preferences: {str(e)}"
+            detail=f"Failed to delete writing preferences: {str(e)}",
         )
+        

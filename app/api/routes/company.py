@@ -1,26 +1,84 @@
-"""Company profile management endpoints."""
+"""Tenant-safe company profile management endpoints."""
 
 import logging
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
-from app.models import Company
+from app.core.dependencies import get_current_user
+from app.models import Company, Organization, User, UserOrganization
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.schemas.common import SuccessResponse
-from app.utils.response_helpers import create_success_response, MESSAGES
+from app.utils.response_helpers import create_success_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/companies", tags=["company"])
 
 
-@router.post("", response_model=SuccessResponse)
-async def create_company(
+def _assert_user_in_org(db: Session, user_id: UUID, organization_id: UUID) -> None:
+    membership = (
+        db.query(UserOrganization)
+        .filter(
+            UserOrganization.user_id == user_id,
+            UserOrganization.organization_id == organization_id,
+        )
+        .first()
+    )
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this organization",
+        )
+
+
+def _get_org_or_404(db: Session, organization_id: UUID) -> Organization:
+    organization = (
+        db.query(Organization)
+        .filter(Organization.id == organization_id)
+        .first()
+    )
+
+    if not organization:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+
+    return organization
+
+
+def _get_company_by_org(db: Session, organization_id: UUID) -> Company | None:
+    return (
+        db.query(Company)
+        .filter(Company.organization_id == organization_id)
+        .first()
+    )
+
+
+@router.post("/organization/{organization_id}", response_model=SuccessResponse)
+async def create_company_for_organization(
+    organization_id: UUID,
     company_data: CompanyCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Create a new company profile."""
+    """Create the company profile for a specific organization."""
     try:
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
+
+        existing = _get_company_by_org(db, organization_id)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Company profile already exists for this organization",
+            )
+
         company = Company(
+            organization_id=organization_id,
             name=company_data.name,
             description=company_data.description,
             unique_selling_proposition=company_data.unique_selling_proposition,
@@ -35,89 +93,71 @@ async def create_company(
 
         return create_success_response(
             message="Company profile created successfully",
-            data=CompanyResponse.from_orm(company).model_dump()
+            data=CompanyResponse.from_orm(company).model_dump(),
         )
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error creating company: {str(e)}")
+        logger.error(f"Error creating company profile for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create company: {str(e)}"
+            detail=f"Failed to create company profile: {str(e)}",
         )
 
 
-@router.get("", response_model=SuccessResponse)
-async def list_companies(
+@router.get("/organization/{organization_id}", response_model=SuccessResponse)
+async def get_company_for_organization(
+    organization_id: UUID,
     db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """List all company profiles."""
+    """Get the company profile for the selected organization."""
     try:
-        companies = db.query(Company).offset(skip).limit(limit).all()
-        total = db.query(Company).count()
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
 
-        return create_success_response(
-            message="Companies retrieved successfully",
-            data={
-                "companies": [CompanyResponse.from_orm(c).model_dump() for c in companies],
-                "total": total
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Error listing companies: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve companies: {str(e)}"
-        )
-
-
-@router.get("/{company_id}", response_model=SuccessResponse)
-async def get_company(
-    company_id: str,
-    db: Session = Depends(get_db)
-) -> SuccessResponse:
-    """Get company profile by ID."""
-    try:
-        company = db.query(Company).filter(Company.id == company_id).first()
-
+        company = _get_company_by_org(db, organization_id)
         if not company:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
+                detail="Company profile not found for this organization",
             )
 
         return create_success_response(
-            message="Company retrieved successfully",
-            data=CompanyResponse.from_orm(company).model_dump()
+            message="Company profile retrieved successfully",
+            data=CompanyResponse.from_orm(company).model_dump(),
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving company {company_id}: {str(e)}")
+        logger.error(f"Error retrieving company profile for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve company: {str(e)}"
+            detail=f"Failed to retrieve company profile: {str(e)}",
         )
 
 
-@router.patch("/{company_id}", response_model=SuccessResponse)
-async def update_company(
-    company_id: str,
+@router.patch("/organization/{organization_id}", response_model=SuccessResponse)
+async def update_company_for_organization(
+    organization_id: UUID,
     company_data: CompanyUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Update company profile."""
+    """Update the company profile for the selected organization."""
     try:
-        company = db.query(Company).filter(Company.id == company_id).first()
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
 
+        company = _get_company_by_org(db, organization_id)
         if not company:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
+                detail="Company profile not found for this organization",
             )
 
         update_data = company_data.model_dump(exclude_unset=True)
@@ -129,7 +169,7 @@ async def update_company(
 
         return create_success_response(
             message="Company profile updated successfully",
-            data=CompanyResponse.from_orm(company).model_dump()
+            data=CompanyResponse.from_orm(company).model_dump(),
         )
 
     except HTTPException:
@@ -137,33 +177,36 @@ async def update_company(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error updating company {company_id}: {str(e)}")
+        logger.error(f"Error updating company profile for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update company: {str(e)}"
+            detail=f"Failed to update company profile: {str(e)}",
         )
 
 
-@router.delete("/{company_id}", response_model=SuccessResponse)
-async def delete_company(
-    company_id: str,
-    db: Session = Depends(get_db)
+@router.delete("/organization/{organization_id}", response_model=SuccessResponse)
+async def delete_company_for_organization(
+    organization_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> SuccessResponse:
-    """Delete company profile."""
+    """Delete the company profile for the selected organization."""
     try:
-        company = db.query(Company).filter(Company.id == company_id).first()
+        _get_org_or_404(db, organization_id)
+        _assert_user_in_org(db, current_user.id, organization_id)
 
+        company = _get_company_by_org(db, organization_id)
         if not company:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Company not found"
+                detail="Company profile not found for this organization",
             )
 
         db.delete(company)
         db.commit()
 
         return create_success_response(
-            message="Company profile deleted successfully"
+            message="Company profile deleted successfully",
         )
 
     except HTTPException:
@@ -171,8 +214,9 @@ async def delete_company(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error deleting company {company_id}: {str(e)}")
+        logger.error(f"Error deleting company profile for org {organization_id}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete company: {str(e)}"
+            detail=f"Failed to delete company profile: {str(e)}",
         )
+        
