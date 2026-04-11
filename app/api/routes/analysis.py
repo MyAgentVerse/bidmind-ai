@@ -97,7 +97,7 @@ async def analyze_document(
 
             return create_success_response(
                 message=MESSAGES["ANALYSIS_COMPLETED"],
-                data=AnalysisResponse.from_orm(analysis_result).model_dump()
+                data=AnalysisResponse.from_analysis_result(analysis_result).model_dump()
             )
 
         except ValueError as e:
@@ -142,7 +142,7 @@ async def get_analysis(
 
         return create_success_response(
             message="Analysis retrieved successfully",
-            data=AnalysisResponse.from_orm(analysis).model_dump()
+            data=AnalysisResponse.from_analysis_result(analysis).model_dump()
         )
 
     except HTTPException:

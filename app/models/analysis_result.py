@@ -10,16 +10,25 @@ from app.db.base import BaseModel
 
 class AnalysisResult(BaseModel):
     """
-    Model storing AI-extracted analysis of a procurement document.
+    Model storing AI-extracted analysis of a procurement document or
+    multi-file bid package.
 
-    Contains structured intelligence extracted from the uploaded document:
-    - Document type classification
-    - Requirements extraction
-    - Risk analysis
-    - Deadline identification
-    - Evaluation criteria
-    - Budget clues
-    - Strategic positioning suggestions
+    Phase 1 Step C expanded this from 11 fields to ~25, adding the
+    artifacts a real proposal team needs:
+
+      - Compliance matrix (every requirement with type, source, evidence)
+      - Eligibility / qualifications (go/no-go gates)
+      - Submission instructions (page limits, format, where to submit)
+      - Pricing format (CLINs, line items, basis)
+      - Key personnel requirements
+      - NAICS codes, set-aside status, contract type
+      - Period & place of performance, estimated value
+      - Contracting officer / buyer info
+
+    Less-queryable fields (insurance, required forms, clauses by reference,
+    wage determinations, protest procedures, funding source, past
+    performance requirements) are stored inside ``raw_ai_json`` to keep
+    the table width manageable. They can still be read from the API.
     """
 
     __tablename__ = "analysis_results"
@@ -30,24 +39,38 @@ class AnalysisResult(BaseModel):
     # Foreign key
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False, index=True)
 
-    # Extracted fields
+    # ---- Core fields (from Phase 1 Step B) -----------------------------
     document_type = Column(String(100), nullable=True)  # e.g., "RFP", "RFQ", "RFI"
     opportunity_summary = Column(Text, nullable=True)
+    scope_of_work = Column(JSONB, nullable=True)
+    mandatory_requirements = Column(JSONB, nullable=True)
+    deadlines = Column(JSONB, nullable=True)
+    evaluation_criteria = Column(JSONB, nullable=True)
+    budget_clues = Column(JSONB, nullable=True)
+    risks = Column(JSONB, nullable=True)
+    fit_score = Column(Float, nullable=True)
+    usp_suggestions = Column(JSONB, nullable=True)
+    pricing_strategy_summary = Column(Text, nullable=True)
 
-    # JSON fields for structured data
-    scope_of_work = Column(JSONB, nullable=True)  # List of work items
-    mandatory_requirements = Column(JSONB, nullable=True)  # List of must-haves
-    deadlines = Column(JSONB, nullable=True)  # Important dates
-    evaluation_criteria = Column(JSONB, nullable=True)  # How vendor will be scored
-    budget_clues = Column(JSONB, nullable=True)  # Budget-related information
-    risks = Column(JSONB, nullable=True)  # Identified risks
+    # ---- New in Step C (queryable / get their own column) -------------
+    eligibility_requirements = Column(JSONB, nullable=True)
+    compliance_matrix = Column(JSONB, nullable=True)  # The killer feature
+    submission_instructions = Column(JSONB, nullable=True)
+    pricing_format = Column(JSONB, nullable=True)
+    key_personnel_requirements = Column(JSONB, nullable=True)
+    naics_codes = Column(JSONB, nullable=True)  # List of strings
+    set_aside_status = Column(String(100), nullable=True, index=True)
+    contract_type = Column(String(100), nullable=True, index=True)
+    period_of_performance = Column(String(255), nullable=True)
+    place_of_performance = Column(String(255), nullable=True)
+    estimated_value = Column(String(100), nullable=True)
+    contracting_officer = Column(JSONB, nullable=True)
 
-    # Scoring and suggestions
-    fit_score = Column(Float, nullable=True)  # 0-100 estimated fit
-    usp_suggestions = Column(JSONB, nullable=True)  # List of unique selling propositions
-    pricing_strategy_summary = Column(Text, nullable=True)  # Strategic pricing guidance
-
-    # Raw AI response for debugging/auditing
+    # Raw AI response for debugging/auditing.
+    # Step C also uses this to store the less-queryable extracted fields:
+    #   _source_files, required_forms, past_performance_requirements,
+    #   insurance_requirements, clauses_by_reference, wage_determinations,
+    #   protest_procedures, funding_source
     raw_ai_json = Column(JSONB, nullable=True)
 
     # Relationship

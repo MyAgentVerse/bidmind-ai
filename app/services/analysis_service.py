@@ -205,38 +205,52 @@ Experience: {company.experience or 'Not specified'}"""
                 AnalysisResult.project_id == project_id
             ).first()
 
+            # Map validated analysis_data to ORM column kwargs.
+            # The new Step C columns are JSONB and accept the raw dicts/lists
+            # straight from the validated Pydantic dump.
+            column_kwargs = {
+                # Core (Step B)
+                "document_type": analysis_data.get("document_type"),
+                "opportunity_summary": analysis_data.get("opportunity_summary"),
+                "scope_of_work": analysis_data.get("scope_of_work"),
+                "mandatory_requirements": analysis_data.get("mandatory_requirements"),
+                "deadlines": analysis_data.get("deadlines"),
+                "evaluation_criteria": analysis_data.get("evaluation_criteria"),
+                "budget_clues": analysis_data.get("budget_clues"),
+                "risks": analysis_data.get("risks"),
+                "fit_score": analysis_data.get("fit_score"),
+                "usp_suggestions": analysis_data.get("usp_suggestions"),
+                "pricing_strategy_summary": analysis_data.get("pricing_strategy_summary"),
+                # New in Step C (queryable / dedicated columns)
+                "eligibility_requirements": analysis_data.get("eligibility_requirements"),
+                "compliance_matrix": analysis_data.get("compliance_matrix"),
+                "submission_instructions": analysis_data.get("submission_instructions"),
+                "pricing_format": analysis_data.get("pricing_format"),
+                "key_personnel_requirements": analysis_data.get("key_personnel_requirements"),
+                "naics_codes": analysis_data.get("naics_codes"),
+                "set_aside_status": analysis_data.get("set_aside_status"),
+                "contract_type": analysis_data.get("contract_type"),
+                "period_of_performance": analysis_data.get("period_of_performance"),
+                "place_of_performance": analysis_data.get("place_of_performance"),
+                "estimated_value": analysis_data.get("estimated_value"),
+                "contracting_officer": analysis_data.get("contracting_officer"),
+                # raw_ai_json holds the full validated dict + the
+                # less-queryable Step C fields (required_forms,
+                # past_performance_requirements, insurance_requirements,
+                # clauses_by_reference, wage_determinations,
+                # protest_procedures, funding_source) plus _source_files.
+                "raw_ai_json": analysis_data,
+            }
+
             if existing_analysis:
-                # Update existing analysis
-                existing_analysis.document_type = analysis_data.get("document_type")
-                existing_analysis.opportunity_summary = analysis_data.get("opportunity_summary")
-                existing_analysis.scope_of_work = analysis_data.get("scope_of_work")
-                existing_analysis.mandatory_requirements = analysis_data.get("mandatory_requirements")
-                existing_analysis.deadlines = analysis_data.get("deadlines")
-                existing_analysis.evaluation_criteria = analysis_data.get("evaluation_criteria")
-                existing_analysis.budget_clues = analysis_data.get("budget_clues")
-                existing_analysis.risks = analysis_data.get("risks")
-                existing_analysis.fit_score = analysis_data.get("fit_score")
-                existing_analysis.usp_suggestions = analysis_data.get("usp_suggestions")
-                existing_analysis.pricing_strategy_summary = analysis_data.get("pricing_strategy_summary")
-                existing_analysis.raw_ai_json = analysis_data
+                for k, v in column_kwargs.items():
+                    setattr(existing_analysis, k, v)
                 existing_analysis.updated_at = datetime.utcnow()
                 analysis_result = existing_analysis
             else:
-                # Create new analysis
                 analysis_result = AnalysisResult(
                     project_id=project_id,
-                    document_type=analysis_data.get("document_type"),
-                    opportunity_summary=analysis_data.get("opportunity_summary"),
-                    scope_of_work=analysis_data.get("scope_of_work"),
-                    mandatory_requirements=analysis_data.get("mandatory_requirements"),
-                    deadlines=analysis_data.get("deadlines"),
-                    evaluation_criteria=analysis_data.get("evaluation_criteria"),
-                    budget_clues=analysis_data.get("budget_clues"),
-                    risks=analysis_data.get("risks"),
-                    fit_score=analysis_data.get("fit_score"),
-                    usp_suggestions=analysis_data.get("usp_suggestions"),
-                    pricing_strategy_summary=analysis_data.get("pricing_strategy_summary"),
-                    raw_ai_json=analysis_data
+                    **column_kwargs,
                 )
                 db.add(analysis_result)
 
