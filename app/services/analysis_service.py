@@ -1,9 +1,15 @@
-"""Analysis service for extracting opportunity intelligence from documents."""
+"""Analysis service for extracting opportunity intelligence from documents.
+
+Phase 1 of the BidMind AI deep-analysis upgrade adds multi-document support:
+a single project may have many uploaded files (the main RFP, addenda, the
+SOW, pricing template, technical spec attachments, etc.) and they all need
+to be analyzed together as one bid package.
+"""
 
 import logging
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import AnalysisResult, Project, Company
@@ -30,6 +36,49 @@ class AnalysisService:
             self.client = OpenAI(api_key=self.settings.openai_api_key)
         except ImportError:
             raise ImportError("OpenAI library is required. Install with: pip install openai")
+
+    @staticmethod
+    def combine_files_for_analysis(
+        files: List[Tuple[str, str]]
+    ) -> Tuple[str, List[str]]:
+        """Combine multiple uploaded files into one analysis-ready document.
+
+        Each file is wrapped with clear delimiters so the LLM can attribute
+        every extracted requirement back to its source file. This is the
+        "analyze the whole bid package" path: a real procurement opportunity
+        is almost always main RFP + Q&A addenda + SOW + pricing template +
+        technical specs, and they need to be reasoned about together.
+
+        Args:
+            files: List of ``(filename, extracted_text)`` tuples in the order
+                they should appear in the combined document. The first file
+                is treated as the primary document; subsequent files are
+                addenda / attachments.
+
+        Returns:
+            ``(combined_text, list_of_filenames_used)``. Files with empty
+            extracted text are skipped silently.
+        """
+        if not files:
+            return "", []
+
+        sections: List[str] = []
+        used_filenames: List[str] = []
+
+        # Pre-filter to files that actually have extractable text
+        files_with_text = [(fn, txt) for fn, txt in files if txt and txt.strip()]
+        total = len(files_with_text)
+
+        for idx, (filename, text) in enumerate(files_with_text, start=1):
+            used_filenames.append(filename)
+            sections.append(
+                f"===== DOCUMENT {idx} of {total}: {filename} =====\n\n"
+                f"{text}\n\n"
+                f"===== END OF {filename} ====="
+            )
+
+        combined = "\n\n".join(sections)
+        return combined, used_filenames
 
     def _get_company_context(self, company_id: Optional[str], db: Session) -> Optional[str]:
         """
@@ -66,16 +115,24 @@ Experience: {company.experience or 'Not specified'}"""
         project_id: str,
         extracted_text: str,
         db: Session,
-        company_id: Optional[str] = None
+        company_id: Optional[str] = None,
+        source_files: Optional[List[str]] = None,
     ) -> AnalysisResult:
         """
         Analyze extracted document text and save results.
 
         Args:
             project_id: The project ID
-            extracted_text: The extracted text from the document
+            extracted_text: The extracted text. May be a single document or
+                a multi-file bid package combined via
+                :meth:`combine_files_for_analysis`.
             db: Database session
             company_id: Optional company ID for personalized analysis
+            source_files: Optional list of filenames that make up this bid
+                package. When supplied, the prompt is told the package is
+                multi-document and asked to attribute extracted items back
+                to the right file. The list is also persisted in
+                ``raw_ai_json`` so the API can show it to the user.
 
         Returns:
             AnalysisResult object
@@ -83,15 +140,21 @@ Experience: {company.experience or 'Not specified'}"""
         Raises:
             ValueError: If analysis fails
         """
-        logger.info(f"Starting analysis for project {project_id}")
+        if source_files and len(source_files) > 1:
+            logger.info(
+                f"Starting multi-document analysis for project {project_id} "
+                f"({len(source_files)} files: {source_files})"
+            )
+        else:
+            logger.info(f"Starting analysis for project {project_id}")
 
         # Get company context if available
         company_context = self._get_company_context(company_id, db)
         if company_context:
             logger.info(f"Using company context for project {project_id}")
 
-        # Generate analysis prompt with company context
-        prompt = get_analysis_prompt(extracted_text, company_context)
+        # Generate analysis prompt with company context and file list
+        prompt = get_analysis_prompt(extracted_text, company_context, source_files)
 
         try:
             # Call OpenAI API
@@ -111,6 +174,12 @@ Experience: {company.experience or 'Not specified'}"""
 
             # Parse JSON response
             analysis_data = self._parse_analysis_response(response_text)
+
+            # Stash the source files alongside the raw AI output so we can
+            # surface "this analysis covered files X, Y, Z" in the API
+            # response and audit which files contributed to a given analysis.
+            if source_files:
+                analysis_data["_source_files"] = source_files
 
             # Check if analysis already exists for this project (upsert pattern)
             existing_analysis = db.query(AnalysisResult).filter(

@@ -27,7 +27,13 @@ async def analyze_document(
     request: AnalyzeRequest,
     db: Session = Depends(get_db)
 ) -> SuccessResponse:
-    """Analyze uploaded procurement document with company context if available."""
+    """Analyze the full bid package for a project.
+
+    Phase 1, Step 2: this now combines **every** uploaded file for the
+    project (main RFP + addenda + SOW + pricing template + etc.) into a
+    single multi-document analysis pass, instead of silently picking only
+    the most recent file.
+    """
     try:
         # Verify project exists
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -37,33 +43,53 @@ async def analyze_document(
                 detail=MESSAGES["PROJECT_NOT_FOUND"]
             )
 
-        # Get latest uploaded file
-        uploaded_file = db.query(UploadedFile).filter(
+        # Get ALL uploaded files for this project, oldest first.
+        # The first uploaded file is treated as the primary document; later
+        # files are addenda / attachments.
+        uploaded_files = db.query(UploadedFile).filter(
             UploadedFile.project_id == project_id
-        ).order_by(UploadedFile.created_at.desc()).first()
+        ).order_by(UploadedFile.created_at.asc()).all()
 
-        if not uploaded_file:
+        if not uploaded_files:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No file uploaded for this project"
             )
 
-        if not uploaded_file.extracted_text:
+        # Filter to files that actually have extracted text
+        files_with_text = [
+            (f.original_filename, f.extracted_text)
+            for f in uploaded_files
+            if f.extracted_text and f.extracted_text.strip()
+        ]
+
+        if not files_with_text:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No extracted text found"
+                detail="No extracted text found in any uploaded file"
             )
+
+        # Combine all files into one analysis-ready document
+        combined_text, source_filenames = analysis_service.combine_files_for_analysis(
+            files_with_text
+        )
+
+        logger.info(
+            f"Analyzing {len(source_filenames)} file(s) for project {project_id}: "
+            f"{source_filenames}"
+        )
 
         # Run analysis with company context
         # Use company_id from request body if provided, otherwise from project
         company_id = request.company_id or project.company_id
-        
+
         try:
             analysis_result = await analysis_service.analyze_document(
                 str(project_id),
-                uploaded_file.extracted_text,
+                combined_text,
                 db,
-                company_id=company_id
+                company_id=company_id,
+                source_files=source_filenames,
             )
 
             if company_id:
