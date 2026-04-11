@@ -1,6 +1,7 @@
 """Tenant-safe company profile management endpoints."""
 
 import logging
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -50,7 +51,7 @@ def _get_org_or_404(db: Session, organization_id: UUID) -> Organization:
     return organization
 
 
-def _get_company_by_org(db: Session, organization_id: UUID) -> Company | None:
+def _get_company_by_org(db: Session, organization_id: UUID) -> Optional[Company]:
     return (
         db.query(Company)
         .filter(Company.organization_id == organization_id)

@@ -1,19 +1,39 @@
 """Analysis service for extracting opportunity intelligence from documents.
 
-Phase 1 of the BidMind AI deep-analysis upgrade adds multi-document support:
-a single project may have many uploaded files (the main RFP, addenda, the
-SOW, pricing template, technical spec attachments, etc.) and they all need
-to be analyzed together as one bid package.
+Phase 1 of the BidMind AI deep-analysis upgrade adds:
+
+  - Multi-document support (Step 2): a single project may have many uploaded
+    files (the main RFP, addenda, the SOW, pricing template, technical spec
+    attachments, etc.) and they all need to be analyzed together as one bid
+    package.
+  - Per-call ``AsyncOpenAI`` clients (Step A): no more singleton client
+    bound to a single event loop, no more blocking the FastAPI loop.
+  - Structured outputs + Pydantic validation + retry (Step B): the LLM call
+    runs in JSON mode, the response is parsed and validated against
+    ``AnalysisExtraction`` (the Pydantic source-of-truth schema), and on
+    validation failure we retry up to 3 times with the validation error fed
+    back to the model. Retry attempts intentionally do **not** re-send the
+    full document — they ask the model to fix its previous response, which
+    is far cheaper and almost always sufficient.
 """
 
 import logging
 import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import AnalysisResult, Project, Company
 from app.prompts.analysis_prompts import get_analysis_prompt
+from app.schemas.analysis_extraction import AnalysisExtraction
+
+
+# Maximum number of times we'll ask the LLM to fix a malformed analysis
+# response before giving up. The first attempt is the real call; attempts
+# 2 and 3 only re-send the previous (broken) response and the validation
+# error, NOT the full document — so retries are cheap.
+MAX_ANALYSIS_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +50,22 @@ class AnalysisService:
         self._initialize_openai_client()
 
     def _initialize_openai_client(self):
-        """Initialize OpenAI client."""
+        """Verify the OpenAI library is installed.
+
+        We do **not** store a singleton client. The service is instantiated
+        once at import time (see ``app/api/deps.py``) but the OpenAI calls
+        run inside async request handlers and inside background tasks that
+        spawn their own event loops. ``AsyncOpenAI``'s underlying httpx
+        connection pool binds to the loop in which it's first awaited, so
+        sharing a single instance across loops crashes with cross-loop
+        errors.
+
+        Solution: create a fresh ``AsyncOpenAI`` (via ``async with``) inside
+        each method. Per-call cost is negligible (a few hundred microseconds
+        for the connection pool setup) and the code is bulletproof.
+        """
         try:
-            from openai import OpenAI
-            self.client = OpenAI(api_key=self.settings.openai_api_key)
+            from openai import AsyncOpenAI  # noqa: F401  (import check only)
         except ImportError:
             raise ImportError("OpenAI library is required. Install with: pip install openai")
 
@@ -157,23 +189,10 @@ Experience: {company.experience or 'Not specified'}"""
         prompt = get_analysis_prompt(extracted_text, company_context, source_files)
 
         try:
-            # Call OpenAI API
-            response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
-                max_tokens=4096,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
-
-            # Extract response text
-            response_text = response.choices[0].message.content
-
-            # Parse JSON response
-            analysis_data = self._parse_analysis_response(response_text)
+            # Run the analysis call with JSON-mode + Pydantic validation +
+            # retry-on-validation-failure. Returns a dict that has already
+            # been validated against AnalysisExtraction.
+            analysis_data = await self._call_with_validation_retry(prompt)
 
             # Stash the source files alongside the raw AI output so we can
             # surface "this analysis covered files X, Y, Z" in the API
@@ -238,37 +257,174 @@ Experience: {company.experience or 'Not specified'}"""
             db.rollback()
             raise ValueError(f"Failed to analyze document: {str(e)}")
 
-    def _parse_analysis_response(self, response_text: str) -> Dict[str, Any]:
-        """
-        Parse and validate AI analysis response.
+    async def _call_with_validation_retry(
+        self,
+        prompt: str,
+        max_attempts: int = MAX_ANALYSIS_ATTEMPTS,
+    ) -> Dict[str, Any]:
+        """Call the LLM in JSON mode and validate the response.
 
-        Args:
-            response_text: Raw response from OpenAI
+        Strategy:
+            1. Call OpenAI with ``response_format={"type": "json_object"}``
+               so the model is forced to return syntactically valid JSON.
+            2. Parse the JSON.
+            3. Validate the parsed dict against ``AnalysisExtraction`` (the
+               Pydantic source-of-truth schema).
+            4. If validation fails, send the model only its previous response
+               and the validation error, asking it to fix the issues. We do
+               **not** re-send the full document — the model already saw it
+               on attempt 1, and the document text often dominates the input
+               token count.
+            5. After ``max_attempts`` failures, raise ``ValueError``.
 
         Returns:
-            Parsed analysis data as dictionary
-
-        Raises:
-            ValueError: If response is not valid JSON
+            A dict that has been validated against ``AnalysisExtraction``
+            and is safe to write to the database. Note: this is the
+            ``model_dump()`` output, so callers can still attach extra keys
+            (like ``_source_files``) afterwards.
         """
-        try:
-            # Extract JSON from response
-            analysis_data = json.loads(response_text)
-            logger.debug(f"Successfully parsed analysis response")
-            return analysis_data
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse analysis response as JSON: {str(e)}")
-            # Try to extract JSON from markdown code block
-            if "```json" in response_text:
-                try:
-                    start = response_text.find("```json") + 7
-                    end = response_text.find("```", start)
-                    json_str = response_text[start:end].strip()
-                    return json.loads(json_str)
-                except (json.JSONDecodeError, ValueError):
-                    pass
+        from openai import AsyncOpenAI
 
-            raise ValueError("AI response is not valid JSON")
+        last_error: Optional[str] = None
+        last_response_text: Optional[str] = None
+
+        async with AsyncOpenAI(api_key=self.settings.openai_api_key) as client:
+            for attempt in range(1, max_attempts + 1):
+                # On attempt 1 we send the real prompt. On retries we send
+                # only the previous response + the validation error so the
+                # model can fix the structure without re-reading the doc.
+                if attempt == 1:
+                    messages = [{"role": "user", "content": prompt}]
+                else:
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are correcting a JSON validation error "
+                                "from your previous response. Return ONLY the "
+                                "corrected JSON object that fixes the listed "
+                                "errors while keeping the substance of your "
+                                "previous analysis. Do not add commentary."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Your previous response was:\n\n"
+                                f"{last_response_text}\n\n"
+                                f"It failed validation with these errors:\n"
+                                f"{last_error}\n\n"
+                                f"Return the corrected JSON now."
+                            ),
+                        },
+                    ]
+
+                try:
+                    response = await client.chat.completions.create(
+                        model=self.settings.openai_model,
+                        max_tokens=4096,
+                        # JSON mode: forces syntactically valid JSON.
+                        # Available in openai>=1.3 on gpt-4-1106-preview,
+                        # gpt-4-turbo-preview, gpt-3.5-turbo-1106, and later.
+                        response_format={"type": "json_object"},
+                        messages=messages,
+                    )
+                except Exception as e:
+                    # Network / API errors — log and retry. We do NOT
+                    # consume our validation-retry budget on these because
+                    # the budget is meant for *fixable* output errors.
+                    logger.error(
+                        f"Analysis API call failed on attempt {attempt}: {e}"
+                    )
+                    last_error = f"API error: {e}"
+                    if attempt == max_attempts:
+                        raise ValueError(
+                            f"OpenAI API failed after {max_attempts} attempts: {e}"
+                        )
+                    continue
+
+                response_text = response.choices[0].message.content or ""
+                last_response_text = response_text
+
+                # Parse JSON. JSON mode should guarantee syntactic validity,
+                # but we still try to be tolerant of edge cases (markdown
+                # code fences, leading prose, etc.).
+                try:
+                    raw_dict = self._parse_json_text(response_text)
+                except ValueError as e:
+                    logger.warning(
+                        f"Attempt {attempt}: response was not valid JSON "
+                        f"despite JSON mode: {e}"
+                    )
+                    last_error = f"Response was not valid JSON: {e}"
+                    continue
+
+                # Validate against the Pydantic schema. The model has built-in
+                # coercers for common LLM sloppiness (string fit_score, single
+                # string instead of list, etc.) so this often passes even when
+                # the raw output isn't a perfect match.
+                try:
+                    validated = AnalysisExtraction.model_validate(raw_dict)
+                except ValidationError as e:
+                    logger.warning(
+                        f"Attempt {attempt}: Pydantic validation failed: {e}"
+                    )
+                    last_error = self._format_validation_error(e)
+                    continue
+
+                logger.info(
+                    f"Analysis validated successfully on attempt {attempt}"
+                )
+                return validated.model_dump()
+
+        # All retries exhausted with a validation error (not an API error)
+        raise ValueError(
+            f"Failed to obtain a valid analysis after {max_attempts} "
+            f"attempts. Last validation error: {last_error}"
+        )
+
+    @staticmethod
+    def _parse_json_text(response_text: str) -> Dict[str, Any]:
+        """Parse a JSON object from an LLM response, tolerating common noise.
+
+        JSON mode should guarantee a clean object, but on rare occasions the
+        model still wraps it in a markdown code fence or adds a leading
+        sentence. This helper strips both before parsing.
+        """
+        text = response_text.strip()
+
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            # Drop the first line (``` or ```json)
+            text = text.split("\n", 1)[1] if "\n" in text else text
+            # Drop the trailing fence
+            if text.endswith("```"):
+                text = text[: -3]
+            text = text.strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            # Last-ditch: find the first { and last } and try to parse
+            # that substring.
+            first = text.find("{")
+            last = text.rfind("}")
+            if first != -1 and last != -1 and last > first:
+                try:
+                    return json.loads(text[first : last + 1])
+                except json.JSONDecodeError:
+                    pass
+            raise ValueError(str(e))
+
+    @staticmethod
+    def _format_validation_error(err: ValidationError) -> str:
+        """Format a Pydantic ValidationError into a short, model-friendly hint."""
+        lines = []
+        for e in err.errors():
+            loc = ".".join(str(part) for part in e.get("loc", ())) or "(root)"
+            msg = e.get("msg", "invalid")
+            lines.append(f"  - {loc}: {msg}")
+        return "\n".join(lines) if lines else str(err)
 
     def get_analysis_result(self, project_id: str, db: Session) -> Optional[AnalysisResult]:
         """

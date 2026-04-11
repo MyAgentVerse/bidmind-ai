@@ -22,10 +22,13 @@ class AIEditService:
         self._initialize_openai_client()
 
     def _initialize_openai_client(self):
-        """Initialize OpenAI client."""
+        """Verify the OpenAI library is installed.
+
+        See :meth:`AnalysisService._initialize_openai_client` for why we
+        don't store a singleton client and instead create one per call.
+        """
         try:
-            from openai import OpenAI
-            self.client = OpenAI(api_key=self.settings.openai_api_key)
+            from openai import AsyncOpenAI  # noqa: F401  (import check only)
         except ImportError:
             raise ImportError("OpenAI library is required. Install with: pip install openai")
 
@@ -61,17 +64,20 @@ class AIEditService:
             # Generate edit prompt
             prompt = get_edit_prompt(section_name, current_text, instruction)
 
-            # Call OpenAI
-            response = self.client.chat.completions.create(
-                model=self.settings.openai_model,
-                max_tokens=2000,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
+            # Create a fresh client bound to the current event loop.
+            from openai import AsyncOpenAI
+
+            async with AsyncOpenAI(api_key=self.settings.openai_api_key) as client:
+                response = await client.chat.completions.create(
+                    model=self.settings.openai_model,
+                    max_tokens=2000,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ]
+                )
 
             edited_text = response.choices[0].message.content
 

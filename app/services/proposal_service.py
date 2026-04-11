@@ -33,10 +33,16 @@ class ProposalService:
         self._initialize_openai_client()
 
     def _initialize_openai_client(self):
-        """Initialize OpenAI client."""
+        """Verify the OpenAI library is installed.
+
+        See :meth:`AnalysisService._initialize_openai_client` for why we
+        don't store a singleton client. For proposal generation we still
+        create only **one** client per request — at the top of
+        :meth:`generate_proposal` — and pass it down to all 8 parallel
+        section calls, so the fan-out shares a single connection pool.
+        """
         try:
-            from openai import OpenAI
-            self.client = OpenAI(api_key=self.settings.openai_api_key)
+            from openai import AsyncOpenAI  # noqa: F401  (import check only)
         except ImportError:
             raise ImportError("OpenAI library is required. Install with: pip install openai")
 
@@ -200,25 +206,32 @@ class ProposalService:
                 writing_preferences
             )
 
-            (
-                cover_letter,
-                executive_summary,
-                understanding_of_requirements,
-                proposed_solution,
-                why_us,
-                pricing_positioning,
-                risk_mitigation,
-                closing_statement
-            ) = await asyncio.gather(
-                self._generate_section(cover_letter_prompt),
-                self._generate_section(executive_summary_prompt),
-                self._generate_section(understanding_prompt),
-                self._generate_section(solution_prompt),
-                self._generate_section(why_us_prompt),
-                self._generate_section(pricing_prompt),
-                self._generate_section(risk_prompt),
-                self._generate_section(closing_prompt),
-            )
+            # Create one AsyncOpenAI client per request and share it across
+            # all 8 parallel section generations. The async-with block
+            # ensures the underlying httpx connection pool is closed before
+            # we leave the function, even on exception.
+            from openai import AsyncOpenAI
+
+            async with AsyncOpenAI(api_key=self.settings.openai_api_key) as client:
+                (
+                    cover_letter,
+                    executive_summary,
+                    understanding_of_requirements,
+                    proposed_solution,
+                    why_us,
+                    pricing_positioning,
+                    risk_mitigation,
+                    closing_statement
+                ) = await asyncio.gather(
+                    self._generate_section(client, cover_letter_prompt),
+                    self._generate_section(client, executive_summary_prompt),
+                    self._generate_section(client, understanding_prompt),
+                    self._generate_section(client, solution_prompt),
+                    self._generate_section(client, why_us_prompt),
+                    self._generate_section(client, pricing_prompt),
+                    self._generate_section(client, risk_prompt),
+                    self._generate_section(client, closing_prompt),
+                )
 
             sections = {
                 "cover_letter": cover_letter,
@@ -264,12 +277,17 @@ class ProposalService:
             db.rollback()
             raise ValueError(f"Failed to generate proposal: {str(e)}")
 
-    async def _generate_section(self, prompt: str) -> str:
+    async def _generate_section(self, client, prompt: str) -> str:
         """
-        Generate a single proposal section using OpenAI.
+        Generate a single proposal section using a shared AsyncOpenAI client.
 
         Args:
-            prompt: The prompt for generating the section
+            client: An ``AsyncOpenAI`` instance owned by the caller. The
+                caller is responsible for opening and closing it (typically
+                via ``async with`` in :meth:`generate_proposal`). Sharing one
+                client across all 8 parallel section calls means a single
+                connection pool instead of 8.
+            prompt: The prompt for generating the section.
 
         Returns:
             Generated section text
@@ -278,7 +296,7 @@ class ProposalService:
             ValueError: If generation fails
         """
         try:
-            response = self.client.chat.completions.create(
+            response = await client.chat.completions.create(
                 model=self.settings.openai_model,
                 max_tokens=2000,
                 messages=[
