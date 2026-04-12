@@ -98,6 +98,12 @@ def init_db():
                 "ALTER TABLE companies ADD COLUMN IF NOT EXISTS experience TEXT",
                 "ALTER TABLE companies ADD COLUMN IF NOT EXISTS key_capabilities TEXT",
                 "ALTER TABLE companies ADD COLUMN IF NOT EXISTS unique_selling_proposition TEXT",
+                # Phase 5 tables may be missing updated_at if create_all
+                # created them before migration 013 ran.
+                "ALTER TABLE proposal_generations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE proposal_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE proposal_preferences ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE proposal_learnings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
             ]:
                 try:
                     conn.execute(text(stmt))
