@@ -149,7 +149,7 @@ async def create_project(
         logger.error(f"Error creating project: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create project: {str(e)}"
+            detail="Failed to create project"
         )
 
 
