@@ -292,6 +292,7 @@ class ProposalService:
                         f"{org_learnings.get('satisfaction_rate', 0)}% satisfaction"
                     )
         except Exception as e:
+            db.rollback()  # Clear failed transaction so subsequent queries work
             logger.debug(f"Could not load org learnings (non-fatal): {e}")
 
         # 4. Build chunk retriever + create embeddings if needed
