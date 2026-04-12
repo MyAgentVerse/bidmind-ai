@@ -81,15 +81,33 @@ def init_db():
     from sqlalchemy import text
 
     try:
-        # Enable pgvector extension before creating tables that use it
+        # Run critical schema fixes that Alembic migrations handle but
+        # create_all does NOT (create_all only creates missing tables,
+        # it does not add missing columns to existing tables).
         with engine.connect() as conn:
+            # Enable pgvector extension (Phase 3)
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+            # Add columns that migrations 007+ add but may be missing if
+            # the DB was originally created by create_all without them.
+            for stmt in [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255)",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expiry TIMESTAMP",
+                "ALTER TABLE projects ADD COLUMN IF NOT EXISTS company_id UUID",
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS description TEXT",
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS experience TEXT",
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS key_capabilities TEXT",
+                "ALTER TABLE companies ADD COLUMN IF NOT EXISTS unique_selling_proposition TEXT",
+            ]:
+                try:
+                    conn.execute(text(stmt))
+                except Exception:
+                    pass  # Column may already exist
+
             conn.commit()
     except Exception as e:
         logger.warning(
-            f"Could not enable pgvector extension (non-fatal): {e}. "
-            f"The document_embeddings table may not be created by "
-            f"create_all, but Alembic migration 012 handles it."
+            f"Could not run pre-create_all schema fixes (non-fatal): {e}"
         )
 
     try:
