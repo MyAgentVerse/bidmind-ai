@@ -1,406 +1,492 @@
-"""Prompts for generating proposal sections."""
+"""Prompts for generating grounded proposal sections.
 
-from typing import Optional, Dict, Any
+Phase 2 of the BidMind AI deep-analysis upgrade.
 
+Every prompt function now receives:
 
-def get_cover_letter_prompt(
-    analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
-) -> str:
-    """Generate prompt for cover letter section."""
+  - ``analysis_data`` — the full 30-field extraction (Step C)
+  - ``retrieved_context`` — relevant RFP chunks + compliance entries
+    from ``ChunkRetriever`` (with page citations)
+  - ``prior_sections`` — the text of previously generated sections
+    (for narrative coherence across the 8-section proposal)
+  - ``company`` — optional company profile dict
 
-    summary = analysis_data.get("opportunity_summary", "the opportunity")
-    company_name = company.get("name", "Our Company") if company else "Our Company"
+The prompts are designed to produce grounded, citation-rich text.
+The LLM is instructed to reference specific RFP content using
+``(Page N)`` or ``(Section: ...)`` citations, and to explicitly
+address each compliance requirement that appears in its context.
+"""
 
-    prompt = f"""Write a professional cover letter for a proposal submission.
+from typing import Optional, Dict, Any, List
 
-The opportunity is: {summary}
-
-Company: {company_name}
-
-The cover letter should:
-1. Open with enthusiasm and understanding of the client's needs
-2. Briefly state that you are submitting a comprehensive proposal
-3. Highlight 1-2 key strengths or differentiators
-4. Express commitment to the client's success
-5. Include a professional closing with signature line
-
-Length: 3-4 paragraphs (150-250 words)
-Tone: Professional, confident, but not arrogant
-
-Write ONLY the cover letter text, no introduction or explanation."""
-
-    return prompt
+# Import is deferred so this module can be imported before
+# chunk_retriever is available (e.g., during tests).
+# At call time, retrieved_context is always a RetrievedContext instance.
 
 
-def get_executive_summary_prompt(
-    analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
-) -> str:
-    """Generate prompt for executive summary section."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_analysis_summary(analysis_data: dict) -> str:
+    """Render the analysis fields into a concise summary block."""
+    parts: List[str] = []
 
     summary = analysis_data.get("opportunity_summary", "")
-    requirements = analysis_data.get("mandatory_requirements", [])
-    usp = analysis_data.get("usp_suggestions", [])
-    company_name = company.get("name", "Our Company") if company else "Our Company"
-    company_usp = company.get("usp", "") if company else ""
+    if summary:
+        parts.append(f"Opportunity: {summary}")
 
-    requirements_text = "\n".join([f"- {r}" for r in (requirements[:3] if requirements else [])])
-    usp_text = "\n".join([f"- {u}" for u in (usp[:2] if usp else [])])
+    doc_type = analysis_data.get("document_type", "")
+    if doc_type:
+        parts.append(f"Document Type: {doc_type}")
 
-    company_context = ""
-    if company:
-        company_context = f"\n\nCompany USP: {company_usp}" if company_usp else ""
+    fit = analysis_data.get("fit_score")
+    if fit is not None:
+        parts.append(f"Fit Score: {fit}/100")
 
-    prompt = f"""Write an executive summary for a proposal.
+    scope = analysis_data.get("scope_of_work", [])
+    if scope:
+        items = "\n  - ".join(scope[:8])
+        parts.append(f"Scope of Work:\n  - {items}")
 
-Opportunity Overview:
-{summary}
+    reqs = analysis_data.get("mandatory_requirements", [])
+    if reqs:
+        items = "\n  - ".join(reqs[:8])
+        parts.append(f"Mandatory Requirements:\n  - {items}")
 
-Key Requirements:
-{requirements_text if requirements_text else "- See primary document"}
+    criteria = analysis_data.get("evaluation_criteria", [])
+    if criteria:
+        items = "\n  - ".join(criteria[:6])
+        parts.append(f"Evaluation Criteria:\n  - {items}")
 
-Our Key Differentiators:
-{usp_text if usp_text else "- Expertise and experience"}{company_context}
+    risks = analysis_data.get("risks", [])
+    if risks:
+        items = "\n  - ".join(risks[:6])
+        parts.append(f"Identified Risks:\n  - {items}")
 
-The executive summary should:
-1. Restate the opportunity and client's core challenge
-2. Briefly introduce {company_name}'s approach
-3. Highlight key value propositions
-4. Preview the structure of the proposal
-5. Express confidence in delivering results
+    deadlines = analysis_data.get("deadlines", {})
+    if isinstance(deadlines, dict):
+        dl_parts = [
+            f"  {k}: {v}" for k, v in deadlines.items()
+            if v and v != "Not specified"
+        ]
+        if dl_parts:
+            parts.append("Key Deadlines:\n" + "\n".join(dl_parts))
 
-Length: 4-5 paragraphs (250-350 words)
-Tone: Executive-level, results-focused, clear and compelling
-Style: Professional proposal tone
+    budget = analysis_data.get("budget_clues", {})
+    if isinstance(budget, dict) and budget.get("estimated_budget", "Not specified") != "Not specified":
+        parts.append(f"Budget: {budget.get('estimated_budget', 'Not specified')} ({budget.get('pricing_model', 'TBD')})")
 
-Write ONLY the executive summary text, no introduction or explanation."""
+    return "\n\n".join(parts)
 
-    return prompt
+
+def _build_prior_sections_block(prior_sections: Dict[str, str]) -> str:
+    """Render previously generated sections for coherence context."""
+    if not prior_sections:
+        return ""
+
+    parts: List[str] = []
+    for name, text in prior_sections.items():
+        label = name.replace("_", " ").title()
+        parts.append(f"--- Previously Generated: {label} ---\n{text}")
+    return "\n\n".join(parts)
+
+
+def _build_company_block(company: Optional[Dict[str, Any]]) -> str:
+    """Render the company profile for prompt context."""
+    if not company:
+        return ""
+
+    parts: List[str] = []
+    name = company.get("name", "Our Company")
+    parts.append(f"Company: {name}")
+
+    for field, label in [
+        ("usp", "Unique Selling Proposition"),
+        ("capabilities", "Key Capabilities"),
+        ("experience", "Experience"),
+        ("industry_focus", "Industry Focus"),
+        ("description", "Description"),
+    ]:
+        val = company.get(field)
+        if val:
+            parts.append(f"{label}: {val}")
+
+    return "\n".join(parts)
+
+
+def _section_prompt(
+    section_label: str,
+    instructions: str,
+    analysis_data: dict,
+    retrieved_context: Any,  # RetrievedContext
+    prior_sections: Dict[str, str],
+    company: Optional[Dict[str, Any]] = None,
+    length_guidance: str = "400-600 words",
+) -> str:
+    """Build a complete grounded prompt for any proposal section.
+
+    This is the template all 8 section prompts share. It assembles:
+      1. Role statement
+      2. Retrieved RFP chunks (with page citations)
+      3. Compliance requirements
+      4. Analysis summary
+      5. Prior sections (for coherence)
+      6. Company profile
+      7. Section-specific instructions
+      8. Citation and formatting rules
+    """
+    chunks_text = ""
+    compliance_text = ""
+    if retrieved_context is not None:
+        chunks_text = retrieved_context.format_chunks_for_prompt()
+        compliance_text = retrieved_context.format_compliance_for_prompt()
+
+    analysis_summary = _build_analysis_summary(analysis_data)
+    prior_text = _build_prior_sections_block(prior_sections)
+    company_text = _build_company_block(company)
+
+    sections: List[str] = []
+
+    # Role
+    sections.append(
+        "You are a senior proposal writer with deep experience winning "
+        "government and commercial bids. You write precise, grounded "
+        "proposals that directly address every RFP requirement with "
+        "specific evidence and page citations."
+    )
+
+    # Retrieved RFP context
+    if chunks_text:
+        sections.append(
+            f"=== RFP CONTEXT (retrieved from the source document) ===\n"
+            f"{chunks_text}"
+        )
+
+    # Compliance requirements
+    if compliance_text:
+        sections.append(
+            f"=== COMPLIANCE REQUIREMENTS (from bid package analysis) ===\n"
+            f"{compliance_text}\n\n"
+            f"You MUST explicitly address each [MUST] requirement that is "
+            f"relevant to this section. For [SHOULD] requirements, address "
+            f"them if you can demonstrate capability."
+        )
+
+    # Analysis summary
+    if analysis_summary:
+        sections.append(
+            f"=== ANALYSIS SUMMARY ===\n{analysis_summary}"
+        )
+
+    # Prior sections
+    if prior_text:
+        sections.append(
+            f"=== PREVIOUSLY GENERATED SECTIONS (for coherence) ===\n"
+            f"Do NOT repeat content from these sections. Reference them "
+            f"where appropriate ('As detailed in our Proposed Solution...'). "
+            f"Maintain a consistent narrative voice.\n\n"
+            f"{prior_text}"
+        )
+
+    # Company profile
+    if company_text:
+        sections.append(
+            f"=== COMPANY PROFILE ===\n{company_text}"
+        )
+
+    # Section-specific instructions
+    sections.append(
+        f"=== INSTRUCTIONS: {section_label} ===\n{instructions}"
+    )
+
+    # Citation and formatting rules
+    sections.append(
+        f"=== RULES ===\n"
+        f"- Length: {length_guidance}\n"
+        f"- When referencing specific RFP content, cite the source: "
+        f"'As stated in the RFP (Page 12)...' or '(Section: Scope of Work)'\n"
+        f"- Address each relevant compliance requirement explicitly\n"
+        f"- Be specific — use real names, dates, numbers from the RFP\n"
+        f"- Do NOT invent claims the company cannot support\n"
+        f"- Do NOT repeat content already covered in prior sections\n"
+        f"- Write ONLY this section's content, no headers or meta-commentary"
+    )
+
+    return "\n\n".join(sections)
+
+
+# ---------------------------------------------------------------------------
+# Section prompt functions
+# ---------------------------------------------------------------------------
 
 
 def get_understanding_prompt(
     analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Generate prompt for understanding of requirements section."""
-
-    summary = analysis_data.get("opportunity_summary", "")
-    requirements = analysis_data.get("mandatory_requirements", [])
-    scope = analysis_data.get("scope_of_work", [])
-    eval_criteria = analysis_data.get("evaluation_criteria", [])
-
-    requirements_text = "\n".join([f"- {r}" for r in (requirements[:5] if requirements else [])])
-    scope_text = "\n".join([f"- {s}" for s in (scope[:4] if scope else [])])
-    criteria_text = "\n".join([f"- {c}" for c in (eval_criteria[:3] if eval_criteria else [])])
-
-    if not requirements_text:
-        requirements_text = "- Client seeks comprehensive solution"
-    if not scope_text:
-        scope_text = "- Multiple deliverables"
-    if not criteria_text:
-        criteria_text = "- Technical capability, cost, experience"
-
-    prompt = f"""Write a section demonstrating understanding of client requirements.
-
-Opportunity: {summary}
-
-Client's Requirements:
-{requirements_text}
-
-Scope of Work:
-{scope_text}
-
-Evaluation Criteria:
-{criteria_text}
-
-This section should:
-1. Demonstrate that you understand the client's core challenge
-2. Show you've read and understood the RFP/requirements
-3. Identify the critical success factors
-4. Explain how you map the client's needs to your approach
-5. Show stakeholder awareness (who will be impacted, who needs to be involved)
-
-Length: 5-6 paragraphs (400-500 words)
-Tone: Consultative, client-focused, analytical
-Style: Show deep reading of the requirements document
-
-Write ONLY this section, no introduction or explanation."""
-
-    return prompt
+    """Generate prompt for Understanding of Requirements section."""
+    return _section_prompt(
+        section_label="Understanding of Requirements",
+        instructions=(
+            "Demonstrate that you have thoroughly read and understood the "
+            "client's needs. This section should:\n\n"
+            "1. Restate the core challenge in your own words (showing comprehension, not copying)\n"
+            "2. Identify the critical success factors and why they matter to the client\n"
+            "3. Map the client's stated requirements to underlying business objectives\n"
+            "4. Show awareness of stakeholders who will be impacted\n"
+            "5. Reference specific RFP sections, page numbers, and requirements\n"
+            "6. Identify any dependencies, constraints, or assumptions\n\n"
+            "Tone: Consultative and analytical. Show you understand WHY, not just WHAT."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="400-600 words",
+    )
 
 
 def get_solution_prompt(
     analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Generate prompt for proposed solution section."""
-
-    scope = analysis_data.get("scope_of_work", [])
-    requirements = analysis_data.get("mandatory_requirements", [])
-    company_name = company.get("name", "Our Company") if company else "Our Company"
-    company_capabilities = company.get("capabilities", "") if company else ""
-
-    scope_text = "\n".join([f"- {s}" for s in (scope[:5] if scope else [])])
-
-    capability_text = ""
-    if company_capabilities:
-        capability_text = f"\n\nOur Key Capabilities:\n{company_capabilities}"
-
-    prompt = f"""Write a detailed proposed solution section for a proposal.
-
-Company: {company_name}{capability_text}
-
-Scope of Work to Address:
-{scope_text if scope_text else "- Full project scope"}
-
-Mandatory Requirements: {len(requirements)} requirements to meet
-
-This solution section should:
-1. Outline your overall approach (methodology/framework)
-2. Describe how you'll address each major component of the scope
-3. Explain your implementation timeline/phases
-4. Detail roles and responsibilities
-5. Describe quality assurance and oversight mechanisms
-6. Address risks and mitigation strategies specific to implementation
-7. Show how you'll ensure successful adoption/transition
-
-Structure:
-- Opening statement of approach
-- Detailed solution components/workstreams
-- Timeline/phases
-- Quality and governance
-- Risk mitigation for implementation
-- Success criteria and metrics
-
-Length: 8-10 paragraphs (600-800 words)
-Tone: Detailed, practical, solution-focused
-Style: Balance between specificity and flexibility
-
-Write ONLY this section, no introduction or explanation."""
-
-    return prompt
+    """Generate prompt for Proposed Solution section."""
+    return _section_prompt(
+        section_label="Proposed Solution",
+        instructions=(
+            "Present a detailed, actionable solution that directly addresses "
+            "every scope item and requirement from the RFP. This section should:\n\n"
+            "1. Open with your overall approach / methodology / framework\n"
+            "2. For EACH major scope item from the RFP, describe HOW you will deliver it\n"
+            "3. Provide a phased implementation timeline with specific milestones\n"
+            "4. Detail team roles and responsibilities\n"
+            "5. Describe quality assurance and governance mechanisms\n"
+            "6. Explain how you will handle transitions and knowledge transfer\n"
+            "7. Tie every claim back to a specific RFP requirement or evaluation criterion\n\n"
+            "Structure: methodology overview → phased delivery → team → QA → transition.\n"
+            "Tone: Detailed, practical, solution-focused. Balance specificity with flexibility."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="600-900 words",
+    )
 
 
 def get_why_us_prompt(
     analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Generate prompt for why us section with company profile context."""
-
-    usp = analysis_data.get("usp_suggestions", [])
-    fit_score = analysis_data.get("fit_score", 75)
-
-    usp_text = "\n".join([f"- {u}" for u in (usp[:4] if usp else [])])
-
-    company_context = ""
-    if company:
-        company_name = company.get("name", "Our Company")
-        company_usp = company.get("usp", "")
-        company_experience = company.get("experience", "")
-        company_capabilities = company.get("capabilities", "")
-        company_industry = company.get("industry_focus", "")
-
-        company_context = f"""
-COMPANY PROFILE:
-Company Name: {company_name}
-Unique Selling Proposition: {company_usp or 'Not specified'}
-Key Capabilities: {company_capabilities or 'Multiple service areas'}
-Experience: {company_experience or 'Established track record'}
-Industry Focus: {company_industry or 'Multiple industries'}
-
-Use the company's actual USP and experience when positioning them as the best choice.
-"""
-    else:
-        company_name = "Our Company"
-
-    if not usp_text:
-        usp_text = "- Industry expertise\n- Proven methodology\n- Client success"
-
-    prompt = f"""Write a 'Why Us' section that positions {company_name} as the best choice.
-{company_context}
-Estimated Fit to Opportunity: {fit_score}%
-
-Suggested Differentiators to Highlight:
-{usp_text}
-
-This section should:
-1. State your core competitive advantages
-2. Highlight relevant experience (with actual company background)
-3. Demonstrate industry knowledge
-4. Show understanding of client's business context
-5. Explain your culture and team's commitment
-6. Address longevity and stability as a partner
-7. Connect your capabilities to the client's specific evaluation criteria
-
-IMPORTANT:
-- Base all claims on the actual company capabilities provided
-- Reference the company's actual USP and experience
-- Focus on how their real strengths match the client's needs
-- Be confident but not exaggerated
-- If company is new or lacks experience in an area, position differently (agility, fresh perspective, etc.)
-
-Structure:
-- Opening statement of competitive advantage
-- Experience and track record
-- Methodology and approach
-- Team capabilities
-- Client commitment and support
-- Partnership and long-term value
-
-Length: 6-8 paragraphs (500-700 words)
-Tone: Confident, evidence-based, consultative
-Style: Differentiation-focused
-
-Write ONLY this section, no introduction or explanation."""
-
-    return prompt
-
-
-def get_pricing_prompt(
-    analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
-) -> str:
-    """Generate prompt for pricing positioning section."""
-
-    budget_clues = analysis_data.get("budget_clues", {})
-    eval_criteria = analysis_data.get("evaluation_criteria", [])
-    doc_type = analysis_data.get("document_type", "RFP")
-
-    budget_text = budget_clues.get("estimated_budget", "Not specified")
-    pricing_model = budget_clues.get("pricing_model", "To be determined")
-
-    prompt = f"""Write a pricing positioning section for a proposal.
-
-Document Type: {doc_type}
-Budget Indication: {budget_text}
-Suggested Pricing Model: {pricing_model}
-Evaluation Criteria: {eval_criteria}
-
-This section should:
-1. Explain your pricing philosophy and approach
-2. Justify value provided relative to cost
-3. Describe cost structure (labor, materials, overhead, profit margin)
-4. Explain your delivery value and ROI
-5. Address flexibility in pricing (volume discounts, phased approach, etc.)
-6. Demonstrate cost awareness and value orientation
-
-IMPORTANT:
-- This is POSITIONING guidance, not actual pricing quotes
-- Do NOT invent specific dollar amounts or rates
-- Focus on strategy: value-based, cost-plus, performance-based pricing etc.
-- Show alignment with client's budget constraints if known
-- Explain pricing rationale without specific numbers
-
-This section guides pricing negotiations:
-- It's strategic guidance, not a binding quote
-- Actual pricing will be customized based on final scope
-- It demonstrates business acumen and flexibility
-
-Length: 4-5 paragraphs (300-400 words)
-Tone: Business-savvy, transparent about costs
-Style: Strategic and consultative
-
-Write ONLY this section, no introduction or explanation."""
-
-    return prompt
+    """Generate prompt for Why Us section."""
+    company_name = company.get("name", "Our Company") if company else "Our Company"
+    return _section_prompt(
+        section_label=f"Why {company_name}",
+        instructions=(
+            f"Position {company_name} as the best choice for this opportunity. "
+            f"This section should:\n\n"
+            "1. State your core competitive advantages with evidence\n"
+            "2. Highlight relevant past performance that matches the RFP's scope\n"
+            "3. Show how your team's certifications and experience meet key personnel requirements\n"
+            "4. Demonstrate industry knowledge specific to the client's sector\n"
+            "5. Connect each differentiator to a specific evaluation criterion from the RFP\n"
+            "6. Address longevity, stability, and commitment as a long-term partner\n\n"
+            "IMPORTANT: Base all claims on the company profile provided. Do NOT fabricate "
+            "experience or certifications. If the company is newer or lacks specific "
+            "experience, position differently (agility, fresh perspective, specialized focus).\n\n"
+            "Tone: Confident and evidence-based. Every claim maps to a proof point."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="500-700 words",
+    )
 
 
 def get_risk_mitigation_prompt(
     analysis_data: dict,
-    company: Optional[Dict[str, Any]] = None
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Generate prompt for risk mitigation section."""
+    """Generate prompt for Risk Mitigation section."""
+    return _section_prompt(
+        section_label="Risk Mitigation",
+        instructions=(
+            "Present a comprehensive risk management approach that shows "
+            "foresight and professionalism. This section should:\n\n"
+            "1. Address EACH risk identified in the RFP analysis (see compliance requirements)\n"
+            "2. Add 2-3 risks from your implementation experience that the RFP didn't mention\n"
+            "3. For each risk, provide:\n"
+            "   - Clear identification and why it matters\n"
+            "   - Likelihood and impact assessment\n"
+            "   - Specific mitigation strategy\n"
+            "   - Contingency plan if mitigation fails\n"
+            "   - How you will monitor and report on it\n"
+            "4. Describe your overall risk governance framework\n"
+            "5. Explain escalation procedures and communication cadence\n\n"
+            "Tone: Proactive and confident. Risk-aware without being alarmist."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="500-650 words",
+    )
 
-    risks = analysis_data.get("risks", [])
-    scope = analysis_data.get("scope_of_work", [])
 
-    risks_text = "\n".join([f"- {r}" for r in (risks[:5] if risks else [])])
+def get_pricing_prompt(
+    analysis_data: dict,
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate prompt for Pricing Positioning section."""
+    budget = analysis_data.get("budget_clues", {})
+    pricing_format = analysis_data.get("pricing_format", {})
 
-    if not risks_text:
-        risks_text = "- Project complexity\n- Timeline constraints\n- Resource availability"
+    budget_note = ""
+    if isinstance(budget, dict):
+        est = budget.get("estimated_budget", "Not specified")
+        model = budget.get("pricing_model", "Not specified")
+        if est != "Not specified":
+            budget_note = f"\nBudget indication: {est}, pricing model: {model}"
 
-    scope_risks_text = "\n".join([f"- {s}" for s in (scope[:3] if scope else [])])
+    format_note = ""
+    if isinstance(pricing_format, dict) and any(pricing_format.values()):
+        parts = [f"{k}: {v}" for k, v in pricing_format.items() if v]
+        if parts:
+            format_note = "\nPricing format requirements: " + "; ".join(parts)
 
-    prompt = f"""Write a risk mitigation section for a proposal.
+    return _section_prompt(
+        section_label="Pricing Positioning",
+        instructions=(
+            "Present your pricing philosophy and approach. This is strategic "
+            "positioning, NOT specific dollar amounts. This section should:\n\n"
+            "1. Explain your pricing philosophy (value-based, competitive, etc.)\n"
+            "2. Describe the cost structure aligned with the RFP's pricing format\n"
+            "3. Justify value relative to cost — tie pricing to ROI and outcomes\n"
+            "4. Address the client's budget constraints if known\n"
+            "5. Describe flexibility (phased approach, volume discounts, options)\n"
+            "6. Show alignment with the evaluation criteria's cost weighting\n\n"
+            "IMPORTANT: Do NOT invent specific dollar amounts or hourly rates. "
+            "This section guides pricing strategy, not binding quotes. "
+            "Actual pricing will be customized based on final scope.\n"
+            f"{budget_note}{format_note}\n\n"
+            "Tone: Business-savvy, transparent about value proposition."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="300-450 words",
+    )
 
-Identified Risks from Document:
-{risks_text}
 
-Scope Elements at Risk:
-{scope_risks_text}
+def get_executive_summary_prompt(
+    analysis_data: dict,
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate prompt for Executive Summary section.
 
-This section should address:
-1. Key risks identified in the RFP/opportunity
-2. Additional risks from your implementation experience
-3. Mitigation strategies for each major risk
-4. Contingency plans and fallbacks
-5. Communication and escalation procedures
-6. Quality assurance checkpoints
-7. How you'll ensure timeline and budget adherence
+    Generated AFTER the core sections so it can synthesize them.
+    """
+    company_name = company.get("name", "Our Company") if company else "Our Company"
+    return _section_prompt(
+        section_label="Executive Summary",
+        instructions=(
+            "Write a compelling executive summary that synthesizes the "
+            "entire proposal into a concise, persuasive overview. "
+            "This section should:\n\n"
+            "1. Open with the client's core challenge (1-2 sentences)\n"
+            f"2. State {company_name}'s value proposition for this specific opportunity\n"
+            "3. Summarize the proposed solution approach (from the Proposed Solution section)\n"
+            "4. Highlight 2-3 key differentiators (from the Why Us section)\n"
+            "5. Preview the risk management approach\n"
+            "6. Express confidence in delivering measurable results\n\n"
+            "CRITICAL: This section is written AFTER all other sections. "
+            "Synthesize — do NOT copy. A senior executive should be able to "
+            "read this alone and understand the full value proposition.\n\n"
+            "Tone: Executive-level, results-focused, compelling."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="250-400 words",
+    )
 
-Risk Categories to Address:
-- Technical/implementation risks
-- Schedule/timeline risks
-- Resource/staffing risks
-- Integration/transition risks
-- Organizational/adoption risks
-- External dependency risks
 
-For each risk:
-- Identify the risk clearly
-- Explain why it matters
-- Describe your mitigation strategy
-- Explain how you'll monitor/manage it
+def get_cover_letter_prompt(
+    analysis_data: dict,
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Generate prompt for Cover Letter section."""
+    company_name = company.get("name", "Our Company") if company else "Our Company"
+    co_info = analysis_data.get("contracting_officer", {})
+    recipient = ""
+    if isinstance(co_info, dict) and co_info.get("name"):
+        recipient = f"\nRecipient: {co_info.get('name')}, {co_info.get('title', '')}, {co_info.get('organization', '')}"
 
-Length: 6-7 paragraphs (500-650 words)
-Tone: Professional, proactive, confident
-Style: Risk-aware without being alarmist
-
-Write ONLY this section, no introduction or explanation."""
-
-    return prompt
+    return _section_prompt(
+        section_label="Cover Letter",
+        instructions=(
+            "Write a professional cover letter for the proposal submission. "
+            "This section should:\n\n"
+            "1. Address the contracting officer by name if known\n"
+            "2. State that you are submitting a proposal in response to the specific RFP\n"
+            "3. Express enthusiasm and understanding of the client's needs (1-2 sentences)\n"
+            "4. Highlight 1-2 key strengths drawn from the Executive Summary\n"
+            "5. Express commitment to the client's success\n"
+            "6. Include a professional closing with signature line placeholder\n"
+            f"{recipient}\n\n"
+            "Tone: Professional, warm but not effusive. First impression matters."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="150-250 words",
+    )
 
 
 def get_closing_prompt(
+    analysis_data: dict,
+    retrieved_context: Any = None,
+    prior_sections: Optional[Dict[str, str]] = None,
+    company: Optional[Dict[str, Any]] = None,
     summary: str = "",
-    company: Optional[Dict[str, Any]] = None
 ) -> str:
-    """Generate prompt for closing statement section."""
-
+    """Generate prompt for Closing Statement section."""
     company_name = company.get("name", "Our Company") if company else "Our Company"
-
-    prompt = f"""Write a closing statement for a proposal submission.
-
-Company: {company_name}
-Summary: {summary if summary else "Professional services engagement"}
-
-This closing should:
-1. Summarize the key value proposition in 1-2 sentences
-2. Reiterate your commitment to the client's success
-3. Highlight your enthusiasm for the engagement
-4. Include a call to action (next steps, discussion)
-5. Provide professional contact information template
-6. Express thanks for the opportunity
-
-The closing should:
-- Reinforce your positioning
-- Leave a positive final impression
-- Be memorable but not overly dramatic
-- Include next steps or timeline expectations
-- Be brief and impactful
-
-Structure:
-- Brief recap of key value
-- Commitment and enthusiasm
-- Call to action/next steps
-- Professional closing
-- Contact template
-
-Length: 2-3 paragraphs (100-150 words)
-Tone: Professional, positive, action-oriented
-Style: Strong conclusion without redundancy
-
-Write ONLY this closing section, no introduction or explanation."""
-
-    return prompt
+    return _section_prompt(
+        section_label="Closing Statement",
+        instructions=(
+            "Write a brief, impactful closing that leaves a positive "
+            "final impression. This section should:\n\n"
+            f"1. Summarize {company_name}'s key value proposition in 1-2 sentences\n"
+            "2. Reiterate commitment to the client's success\n"
+            "3. Include a clear call to action (next steps, discussion, presentation)\n"
+            "4. Provide professional contact information template\n"
+            "5. Express thanks for the opportunity\n\n"
+            "Tone: Confident, positive, action-oriented. Brief and memorable."
+        ),
+        analysis_data=analysis_data,
+        retrieved_context=retrieved_context,
+        prior_sections=prior_sections or {},
+        company=company,
+        length_guidance="100-175 words",
+    )
