@@ -68,7 +68,35 @@ def init_db():
     Initialize database by creating all tables.
     This should be called once during application startup.
     In production, use Alembic migrations instead.
+
+    Note: The Procfile runs ``alembic upgrade head`` BEFORE the server
+    starts, so migrations handle table creation. This function is a
+    safety net that creates any tables Alembic missed.
+
+    Phase 3 added pgvector support. We must enable the extension
+    before ``create_all`` tries to create the ``document_embeddings``
+    table with its ``VECTOR(1536)`` column.
     """
     from app.db.base import Base
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created successfully")
+    from sqlalchemy import text
+
+    try:
+        # Enable pgvector extension before creating tables that use it
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+    except Exception as e:
+        logger.warning(
+            f"Could not enable pgvector extension (non-fatal): {e}. "
+            f"The document_embeddings table may not be created by "
+            f"create_all, but Alembic migration 012 handles it."
+        )
+
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        # Don't crash the server — Alembic already created the tables.
+        # This only happens if create_all encounters an issue with a
+        # type (like vector) that the DB doesn't support yet.
