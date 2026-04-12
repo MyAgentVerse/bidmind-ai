@@ -37,8 +37,18 @@ class Project(BaseModel):
     # Fields
     title = Column(String(255), nullable=False, index=True)
     description = Column(String(1000), nullable=True)
+    # values_callable tells SQLAlchemy to use the .value attributes
+    # (lowercase: "created", "file_uploaded", etc.) for matching against
+    # the Postgres native enum, instead of the default .name attributes
+    # (UPPERCASE: "CREATED", "FILE_UPLOADED", etc.). The Postgres enum
+    # was originally created with lowercase values, so without this fix,
+    # every Project ORM query crashes with:
+    #   "'created' is not among the defined enum values"
     status = Column(
-        Enum(ProjectStatus),
+        Enum(
+            ProjectStatus,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         default=ProjectStatus.CREATED,
         nullable=False,
         index=True
