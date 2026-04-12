@@ -116,6 +116,45 @@ def _build_company_block(company: Optional[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
+def _build_learnings_block(learnings: Optional[Dict[str, Any]]) -> str:
+    """Render learned preferences from past proposal feedback."""
+    if not learnings:
+        return ""
+
+    parts: List[str] = []
+
+    prefs = learnings.get("learned_preferences", {})
+    if prefs:
+        if prefs.get("tone_preference"):
+            parts.append(f"Preferred tone: {prefs['tone_preference']}")
+        if prefs.get("emphasis_areas"):
+            parts.append(f"Emphasize: {', '.join(prefs['emphasis_areas'])}")
+        if prefs.get("avoid_areas"):
+            parts.append(f"Avoid: {', '.join(prefs['avoid_areas'])}")
+        if prefs.get("pricing_guidance"):
+            parts.append(f"Pricing approach: {prefs['pricing_guidance']}")
+        if prefs.get("length_preference"):
+            parts.append(f"Length preference: {prefs['length_preference']}")
+        if prefs.get("winning_patterns"):
+            parts.append(f"Winning patterns: {', '.join(prefs['winning_patterns'][:3])}")
+
+    issues = learnings.get("common_issues", {})
+    if issues:
+        top_issues = sorted(issues.items(), key=lambda x: x[1], reverse=True)[:5]
+        issue_strs = [f"{k} ({v}x)" for k, v in top_issues]
+        parts.append(f"Common complaints to avoid: {', '.join(issue_strs)}")
+
+    sat = learnings.get("satisfaction_rate")
+    total = learnings.get("total_proposals")
+    if sat is not None and total:
+        parts.append(f"Track record: {total} proposals, {sat}% satisfaction rate")
+
+    if not parts:
+        return ""
+
+    return "\n".join(parts)
+
+
 def _section_prompt(
     section_label: str,
     instructions: str,
@@ -123,6 +162,7 @@ def _section_prompt(
     retrieved_context: Any,  # RetrievedContext
     prior_sections: Dict[str, str],
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
     length_guidance: str = "400-600 words",
 ) -> str:
     """Build a complete grounded prompt for any proposal section.
@@ -196,6 +236,16 @@ def _section_prompt(
             f"=== COMPANY PROFILE ===\n{company_text}"
         )
 
+    # Phase 5: Learned preferences from past feedback
+    learnings_text = _build_learnings_block(learnings)
+    if learnings_text:
+        sections.append(
+            f"=== LEARNED PREFERENCES (from past proposal feedback) ===\n"
+            f"This organization has accumulated feedback on past proposals. "
+            f"Apply these preferences to improve output quality:\n\n"
+            f"{learnings_text}"
+        )
+
     # Section-specific instructions
     sections.append(
         f"=== INSTRUCTIONS: {section_label} ===\n{instructions}"
@@ -227,6 +277,7 @@ def get_understanding_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Understanding of Requirements section."""
     return _section_prompt(
@@ -255,6 +306,7 @@ def get_solution_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Proposed Solution section."""
     return _section_prompt(
@@ -276,6 +328,7 @@ def get_solution_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="600-900 words",
     )
 
@@ -285,6 +338,7 @@ def get_why_us_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Why Us section."""
     company_name = company.get("name", "Our Company") if company else "Our Company"
@@ -308,6 +362,7 @@ def get_why_us_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="500-700 words",
     )
 
@@ -317,6 +372,7 @@ def get_risk_mitigation_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Risk Mitigation section."""
     return _section_prompt(
@@ -340,6 +396,7 @@ def get_risk_mitigation_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="500-650 words",
     )
 
@@ -349,6 +406,7 @@ def get_pricing_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Pricing Positioning section."""
     budget = analysis_data.get("budget_clues", {})
@@ -388,6 +446,7 @@ def get_pricing_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="300-450 words",
     )
 
@@ -397,6 +456,7 @@ def get_executive_summary_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Executive Summary section.
 
@@ -424,6 +484,7 @@ def get_executive_summary_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="250-400 words",
     )
 
@@ -433,6 +494,7 @@ def get_cover_letter_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate prompt for Cover Letter section."""
     company_name = company.get("name", "Our Company") if company else "Our Company"
@@ -459,6 +521,7 @@ def get_cover_letter_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="150-250 words",
     )
 
@@ -468,6 +531,7 @@ def get_closing_prompt(
     retrieved_context: Any = None,
     prior_sections: Optional[Dict[str, str]] = None,
     company: Optional[Dict[str, Any]] = None,
+    learnings: Optional[Dict[str, Any]] = None,
     summary: str = "",
 ) -> str:
     """Generate prompt for Closing Statement section."""
@@ -488,5 +552,6 @@ def get_closing_prompt(
         retrieved_context=retrieved_context,
         prior_sections=prior_sections or {},
         company=company,
+        learnings=learnings,
         length_guidance="100-175 words",
     )

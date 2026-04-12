@@ -38,6 +38,7 @@ from app.models import Company, CompanyWritingPreferences
 from app.services.file_parser_service import FileParserService
 from app.services.chunk_retriever import ChunkRetriever, SECTION_RELEVANCE
 from app.services.embedding_service import EmbeddingService
+from app.services.learning_service import LearningService
 from app.prompts.proposal_prompts import (
     get_understanding_prompt,
     get_solution_prompt,
@@ -273,7 +274,27 @@ class ProposalService:
         company_data = self._get_company_dict(company_id, db)
         writing_preferences = self._get_writing_preferences(company_id, db)
 
-        # 3. Build chunk retriever + create embeddings if needed
+        # 3. Phase 5: Retrieve learned preferences from past feedback
+        org_learnings = None
+        try:
+            org_id = None
+            project = db.query(Project).filter(Project.id == project_id).first()
+            if project and hasattr(project, "organization_id"):
+                org_id = str(project.organization_id) if project.organization_id else None
+
+            if org_id:
+                learning_svc = LearningService()
+                org_learnings = learning_svc.get_learnings_for_prompt(org_id, db)
+                if org_learnings:
+                    logger.info(
+                        f"Using learned preferences for org {org_id}: "
+                        f"{org_learnings.get('total_feedback', 0)} feedback entries, "
+                        f"{org_learnings.get('satisfaction_rate', 0)}% satisfaction"
+                    )
+        except Exception as e:
+            logger.debug(f"Could not load org learnings (non-fatal): {e}")
+
+        # 4. Build chunk retriever + create embeddings if needed
         retriever, embedding_service = await self._build_retriever_and_embeddings(
             project_id, analysis, db
         )
@@ -301,13 +322,14 @@ class ProposalService:
                     else:
                         context = retriever.retrieve_for_section(section_name)
 
-                    # Build grounded prompt
+                    # Build grounded prompt (with learnings from Phase 5)
                     prompt_fn = PROMPT_FUNCTIONS[section_name]
                     base_prompt = prompt_fn(
                         analysis_data=analysis_dict,
                         retrieved_context=context,
                         prior_sections=sections,
                         company=company_data,
+                        learnings=org_learnings,
                     )
 
                     # Apply writing preferences
@@ -391,6 +413,22 @@ class ProposalService:
                 project.status = "proposal_generated"
                 if company_id and not project.company_id:
                     project.company_id = company_id
+
+            # Phase 5: Record this generation for future feedback
+            try:
+                if org_id:
+                    learning_svc = LearningService()
+                    title = analysis_dict.get("opportunity_summary", "Untitled Proposal")[:200]
+                    learning_svc.record_generation(
+                        organization_id=org_id,
+                        proposal_title=title,
+                        sections=sections,
+                        analysis_data=analysis_dict,
+                        writing_preferences=None,
+                        db=db,
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to record generation (non-fatal): {e}")
 
             db.commit()
             logger.info(f"Proposal generation completed for {project_id}")
