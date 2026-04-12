@@ -146,10 +146,10 @@ async def create_project(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error creating project: {str(e)}")
+        logger.error(f"Error creating project: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create project"
+            detail=f"Failed to create project: {str(e)}"
         )
 
 
