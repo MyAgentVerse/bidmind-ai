@@ -35,6 +35,10 @@ class User(BaseModel):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
 
+    # Password reset (columns from migration 007)
+    reset_token = Column(String(255), nullable=True)
+    reset_token_expiry = Column(DateTime, nullable=True)
+
     # Relationships
     organizations = relationship(
         "UserOrganization",
