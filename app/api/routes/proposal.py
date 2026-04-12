@@ -67,10 +67,10 @@ async def generate_proposal(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in generate_proposal: {str(e)}")
+        logger.error(f"Error in generate_proposal: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=MESSAGES["INTERNAL_ERROR"]
+            detail=f"Proposal generation failed: {str(e)}"
         )
 
 
