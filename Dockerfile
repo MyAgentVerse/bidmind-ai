@@ -29,15 +29,11 @@ COPY . .
 # Create uploads directory
 RUN mkdir -p uploads
 
-# Expose port
-EXPOSE 8000
+# Expose the port Railway assigns (default 8000 for local)
+EXPOSE ${PORT:-8000}
 
-# Health check — must use the same PORT that uvicorn binds to
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c "import os, httpx; httpx.get(f'http://localhost:{os.environ.get(\"PORT\", 8000)}/api/health')"
+# Disable Docker healthcheck — Railway manages health checking itself.
+HEALTHCHECK NONE
 
 # Run migrations then start the application.
-# alembic upgrade head ensures all schema changes (migrations 001-014+)
-# are applied before the server accepts requests. This is critical because
-# Railway uses the Dockerfile (not the Procfile) for builds.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
