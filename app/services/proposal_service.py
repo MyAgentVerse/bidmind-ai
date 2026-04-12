@@ -320,23 +320,54 @@ class ProposalService:
                         client, final_prompt
                     )
 
-            # 5. Compliance coverage check
+            # 5. Phase 4: LLM-enhanced compliance review + targeted revision
             try:
                 from app.services.proposal_reviewer import ProposalReviewer
 
                 reviewer = ProposalReviewer()
+
+                # Stage 1: deterministic keyword check
                 review = reviewer.review_coverage(
                     sections, analysis.compliance_matrix or []
                 )
                 logger.info(
-                    f"Coverage: {review.coverage_percentage:.0f}% total, "
-                    f"{review.must_coverage_percentage:.0f}% mandatory. "
+                    f"Deterministic coverage: {review.coverage_percentage:.0f}% "
+                    f"({review.must_coverage_percentage:.0f}% must). "
                     f"Gaps: {len(review.gaps)}"
                 )
+
+                # Stage 2: if there are gaps, ask the LLM to confirm them
+                if review.gaps:
+                    logger.info(
+                        f"Running LLM gap confirmation on {len(review.gaps)} "
+                        f"potential gap(s)..."
+                    )
+                    review = await reviewer.review_coverage_with_llm(
+                        sections, analysis.compliance_matrix or []
+                    )
+                    logger.info(
+                        f"After LLM review: {review.coverage_percentage:.0f}% "
+                        f"coverage, {len(review.gaps)} confirmed gap(s)"
+                    )
+
+                # Stage 3: if confirmed gaps remain, revise affected sections
+                if review.gaps:
+                    logger.info(
+                        f"Revising {len(review.sections_needing_revision)} "
+                        f"section(s) to address {len(review.gaps)} gap(s)..."
+                    )
+                    sections, review = await reviewer.revise_sections_for_gaps(
+                        sections, review, retriever, analysis_dict, company_data
+                    )
+                    logger.info(
+                        f"After revision: {review.coverage_percentage:.0f}% "
+                        f"coverage, {review.revision_passes_completed} pass(es)"
+                    )
+
             except ImportError:
                 pass
             except Exception as e:
-                logger.warning(f"Coverage check failed (non-fatal): {e}")
+                logger.warning(f"Review/revision failed (non-fatal): {e}")
 
             # 6. Save to database
             existing = (
