@@ -2,12 +2,15 @@
 
 import asyncio
 import logging
+import uuid
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models import Project, ProposalDraft
+from app.models.proposal_generation import ProposalGeneration
+from app.models.proposal_feedback import ProposalFeedback
 from app.schemas.proposal import ProposalResponse, ProposalUpdate, ProposalSectionUpdate
 from app.schemas.common import SuccessResponse
 from app.utils.response_helpers import create_success_response, MESSAGES
@@ -263,3 +266,84 @@ async def update_full_proposal(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=MESSAGES["DATABASE_ERROR"]
         )
+
+
+@router.post("/{project_id}/proposal/feedback", response_model=dict)
+async def submit_project_feedback(
+    project_id: str,
+    feedback_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Submit feedback on a project's proposal.
+
+    This endpoint finds (or creates) the ProposalGeneration record
+    for the project so the frontend doesn't need to know the
+    proposal_generation ID.
+    """
+    try:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Find the latest ProposalGeneration for this project's org
+        generation = None
+        if project.organization_id:
+            generation = (
+                db.query(ProposalGeneration)
+                .filter(ProposalGeneration.organization_id == project.organization_id)
+                .order_by(ProposalGeneration.created_at.desc())
+                .first()
+            )
+
+        # If no generation record exists, create one from the proposal draft
+        if not generation:
+            draft = proposal_service.get_proposal_draft(str(project_id), db)
+            if not draft:
+                raise HTTPException(status_code=404, detail="Proposal not found")
+
+            content = "\n\n".join(
+                f"## {s.replace('_', ' ').title()}\n\n{getattr(draft, s, '') or ''}"
+                for s in ProposalDraft.SECTION_ORDER
+                if getattr(draft, s, None)
+            )
+            generation = ProposalGeneration(
+                id=uuid.uuid4(),
+                organization_id=project.organization_id,
+                proposal_title=project.title or "Untitled",
+                proposal_type="bid",
+                proposal_content=content,
+                status="draft",
+            )
+            db.add(generation)
+            db.commit()
+
+        # Map frontend rating names to DB values
+        rating_map = {"great": "love", "love": "love", "okay": "okay", "not_right": "not_right"}
+        rating = rating_map.get(feedback_data.get("rating", "").lower(), feedback_data.get("rating", "okay"))
+
+        feedback = ProposalFeedback(
+            id=uuid.uuid4(),
+            organization_id=generation.organization_id,
+            proposal_id=generation.id,
+            rating=rating,
+            feedback_text=feedback_data.get("feedback_text"),
+            feedback_tags=feedback_data.get("feedback_tags"),
+            action_taken=feedback_data.get("action_taken", "saved"),
+        )
+        db.add(feedback)
+        db.commit()
+
+        logger.info(f"Feedback submitted for project {project_id}: {rating}")
+
+        return {
+            "success": True,
+            "message": "Feedback submitted successfully",
+            "data": {"id": str(feedback.id), "rating": rating}
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error submitting feedback: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to submit feedback: {str(e)}")
