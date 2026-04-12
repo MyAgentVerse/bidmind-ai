@@ -30,13 +30,14 @@ The public API is unchanged:
 
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import ProposalDraft, AnalysisResult, Project, UploadedFile
 from app.models import Company, CompanyWritingPreferences
 from app.services.file_parser_service import FileParserService
-from app.services.chunk_retriever import ChunkRetriever
+from app.services.chunk_retriever import ChunkRetriever, SECTION_RELEVANCE
+from app.services.embedding_service import EmbeddingService
 from app.prompts.proposal_prompts import (
     get_understanding_prompt,
     get_solution_prompt,
@@ -139,16 +140,21 @@ class ProposalService:
 
     # ---- Chunk retrieval -------------------------------------------------
 
-    def _build_retriever(
+    async def _build_retriever_and_embeddings(
         self, project_id: str, analysis: AnalysisResult, db: Session
-    ) -> ChunkRetriever:
-        """Re-parse uploaded files to get chunks, then build a retriever.
+    ) -> Tuple[ChunkRetriever, Optional[EmbeddingService]]:
+        """Re-parse files, build retriever, and lazily create embeddings.
 
-        The upload route stores ``extracted_text`` but not the structured
-        ``DocumentChunk`` list. We re-parse from ``file_path`` on disk.
-        This is fast (~50ms for a 50-page PDF) and avoids a migration.
+        Phase 3: if pgvector is available and embeddings don't exist yet
+        for this project, embed all chunks and store them. This adds ~2-5s
+        on first run but enables semantic search for all subsequent
+        proposal generations.
+
+        Returns:
+            (retriever, embedding_service_or_None)
         """
         all_chunks: list = []
+        file_chunks: list = []  # (file_id, chunks) pairs for embedding
 
         uploaded_files = (
             db.query(UploadedFile)
@@ -161,17 +167,49 @@ class ProposalService:
             try:
                 parsed = FileParserService.parse_file_structured(uf.file_path)
                 all_chunks.extend(parsed.chunks)
+                file_chunks.append((str(uf.id), parsed.chunks))
             except Exception as e:
                 logger.warning(
                     f"Could not re-parse {uf.file_path} for chunks: {e}"
                 )
 
         compliance_matrix = analysis.compliance_matrix or []
+        retriever = ChunkRetriever(all_chunks, compliance_matrix)
+
+        # Phase 3: lazy embedding
+        embedding_service = None
+        try:
+            embedding_service = EmbeddingService()
+
+            if not embedding_service.has_embeddings(project_id, db):
+                logger.info(
+                    f"Creating embeddings for project {project_id} "
+                    f"({len(all_chunks)} chunks)"
+                )
+                total_embedded = 0
+                for file_id, chunks in file_chunks:
+                    count = await embedding_service.embed_and_store_chunks(
+                        project_id, file_id, chunks, db
+                    )
+                    total_embedded += count
+                db.commit()
+                logger.info(f"Embedded {total_embedded} chunks for project {project_id}")
+            else:
+                logger.info(f"Reusing existing embeddings for project {project_id}")
+
+        except Exception as e:
+            logger.warning(
+                f"Embedding setup failed (non-fatal, falling back to "
+                f"keyword-only retrieval): {e}"
+            )
+            embedding_service = None
+
         logger.info(
             f"Built retriever: {len(all_chunks)} chunks, "
-            f"{len(compliance_matrix)} compliance entries"
+            f"{len(compliance_matrix)} compliance entries, "
+            f"embeddings={'yes' if embedding_service else 'no'}"
         )
-        return ChunkRetriever(all_chunks, compliance_matrix)
+        return retriever, embedding_service
 
     # ---- Analysis dict builder -------------------------------------------
 
@@ -235,8 +273,10 @@ class ProposalService:
         company_data = self._get_company_dict(company_id, db)
         writing_preferences = self._get_writing_preferences(company_id, db)
 
-        # 3. Build chunk retriever
-        retriever = self._build_retriever(project_id, analysis, db)
+        # 3. Build chunk retriever + create embeddings if needed
+        retriever, embedding_service = await self._build_retriever_and_embeddings(
+            project_id, analysis, db
+        )
 
         # 4. Sequential generation
         sections: Dict[str, str] = {}
@@ -252,8 +292,14 @@ class ProposalService:
                         f"Generating {idx}/{len(GENERATION_ORDER)}: {section_name}"
                     )
 
-                    # Retrieve relevant chunks
-                    context = retriever.retrieve_for_section(section_name)
+                    # Retrieve relevant chunks (hybrid if embeddings available)
+                    if embedding_service:
+                        context = await self._retrieve_hybrid(
+                            retriever, embedding_service,
+                            section_name, project_id, db
+                        )
+                    else:
+                        context = retriever.retrieve_for_section(section_name)
 
                     # Build grounded prompt
                     prompt_fn = PROMPT_FUNCTIONS[section_name]
@@ -323,6 +369,48 @@ class ProposalService:
             logger.error(f"Error generating proposal: {e}")
             db.rollback()
             raise ValueError(f"Failed to generate proposal: {e}")
+
+    async def _retrieve_hybrid(
+        self,
+        retriever: ChunkRetriever,
+        embedding_service: EmbeddingService,
+        section_name: str,
+        project_id: str,
+        db: Session,
+    ) -> Any:
+        """Hybrid retrieval: keyword + semantic for a single section.
+
+        Builds a query string from the section's keywords + top compliance
+        entries, embeds it, does a pgvector similarity search, then
+        merges with keyword results.
+        """
+        keywords, cm_categories = SECTION_RELEVANCE.get(section_name, ([], []))
+
+        # Build a natural-language query from the section's keywords
+        query = f"RFP sections about: {', '.join(keywords[:10])}"
+        cm_entries = retriever._filter_compliance(cm_categories)
+        if cm_entries:
+            top_reqs = " ".join(
+                e.get("requirement_text", "")[:100] for e in cm_entries[:3]
+            )
+            query += f". Key requirements: {top_reqs}"
+
+        # Semantic search
+        try:
+            semantic_results = await embedding_service.search_similar(
+                project_id, query, db, top_k=15
+            )
+        except Exception as e:
+            logger.warning(f"Semantic search failed for {section_name}: {e}")
+            semantic_results = []
+
+        # Hybrid merge
+        if semantic_results:
+            return retriever.retrieve_for_section_hybrid(
+                section_name, semantic_results
+            )
+        else:
+            return retriever.retrieve_for_section(section_name)
 
     async def _generate_section(self, client, prompt: str) -> str:
         """Generate a single section using the shared AsyncOpenAI client."""

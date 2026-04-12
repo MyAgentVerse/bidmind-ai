@@ -15,6 +15,7 @@ from .proposal_preferences import ProposalPreferences
 from .proposal_generation import ProposalGeneration
 from .proposal_feedback import ProposalFeedback
 from .proposal_learnings import ProposalLearnings
+from .document_embedding import DocumentEmbedding
 
 __all__ = [
     "Company",
@@ -32,4 +33,5 @@ __all__ = [
     "ProposalGeneration",
     "ProposalFeedback",
     "ProposalLearnings",
+    "DocumentEmbedding",
 ]

@@ -1,12 +1,18 @@
-"""Structural keyword-based chunk retrieval for proposal sections.
+"""Chunk retrieval for proposal sections — keyword + semantic hybrid.
 
-Phase 2 of the BidMind AI deep-analysis upgrade.
+Phase 2 introduced structural keyword-based retrieval.
+Phase 3 adds semantic retrieval via pgvector embeddings, creating a
+**hybrid** mode that combines both signals for the best results.
+
+Keyword retrieval: fast, deterministic, good for exact section-heading matches.
+Semantic retrieval: handles paraphrasing and non-standard headings ("Article IV"
+instead of "Scope of Work").
+Hybrid: union of both, re-ranked by combined score.
 
 This module maps each of the 8 proposal sections to relevant RFP chunks
 using structural matching against ``DocumentChunk.section`` (the nearest
-heading text) and ``compliance_matrix`` category fields. No embeddings,
-no vector DB — just deterministic keyword overlap scoring with
-type-based boosts.
+heading text) and ``compliance_matrix`` category fields, plus optional
+semantic similarity when embeddings are available.
 
 The retriever is initialized once per proposal-generation request with
 the pre-parsed chunks and the analysis compliance matrix, then called
@@ -357,6 +363,125 @@ class ChunkRetriever:
             name: self.retrieve_for_section(name)
             for name in SECTION_RELEVANCE
         }
+
+    # ---- Phase 3: Hybrid retrieval (keyword + semantic) ------------------
+
+    def retrieve_for_section_hybrid(
+        self,
+        section_name: str,
+        semantic_results: List[Dict[str, Any]],
+        max_chunks: int = 15,
+        max_token_budget: int = 4000,
+        keyword_weight: float = 0.4,
+        semantic_weight: float = 0.6,
+    ) -> RetrievedContext:
+        """Hybrid retrieval: combine keyword matching with semantic search.
+
+        Args:
+            section_name: One of the 8 proposal section names.
+            semantic_results: Pre-fetched semantic search results from
+                ``EmbeddingService.search_similar()``. Each dict has:
+                ``{text, page, section, chunk_type, similarity}``.
+            max_chunks: Hard cap on chunks returned.
+            max_token_budget: Soft cap on estimated tokens.
+            keyword_weight: Weight for keyword score in combined ranking.
+            semantic_weight: Weight for semantic similarity in combined ranking.
+
+        Returns:
+            ``RetrievedContext`` with the best chunks from both sources.
+        """
+        keywords, cm_categories = SECTION_RELEVANCE.get(
+            section_name, ([], [])
+        )
+
+        # 1. Keyword-scored chunks (from the existing structural retriever)
+        keyword_scored: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        for chunk in self.chunks:
+            score = self._score_chunk(chunk, keywords)
+            if score > 0:
+                key = (chunk.get("text", "").strip()[:200])
+                if key not in keyword_scored or score > keyword_scored[key][0]:
+                    keyword_scored[key] = (score, chunk)
+
+        # Normalize keyword scores to 0-1 range
+        max_kw = max((s for s, _ in keyword_scored.values()), default=1.0)
+        if max_kw > 0:
+            for key in keyword_scored:
+                score, chunk = keyword_scored[key]
+                keyword_scored[key] = (score / max_kw, chunk)
+
+        # 2. Semantic-scored chunks
+        semantic_scored: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        for result in semantic_results:
+            key = (result.get("text", "").strip()[:200])
+            sim = result.get("similarity", 0.0)
+            semantic_scored[key] = (sim, result)
+
+        # 3. Merge: union of both sets, combined score
+        all_keys = set(keyword_scored.keys()) | set(semantic_scored.keys())
+        combined: List[Tuple[float, Dict[str, Any]]] = []
+
+        for key in all_keys:
+            kw_score = keyword_scored.get(key, (0.0, None))[0]
+            sem_score = semantic_scored.get(key, (0.0, None))[0]
+
+            # Pick the chunk data from whichever source has it
+            chunk = (
+                keyword_scored.get(key, (0, None))[1]
+                or semantic_scored.get(key, (0, None))[1]
+            )
+            if chunk is None:
+                continue
+
+            score = (keyword_weight * kw_score) + (semantic_weight * sem_score)
+            combined.append((score, chunk))
+
+        # Sort descending
+        combined.sort(key=lambda x: x[0], reverse=True)
+
+        # 4. Take top-N within token budget
+        selected: List[Dict[str, Any]] = []
+        token_count = 0
+        seen: Set[str] = set()
+
+        for score, chunk in combined:
+            text_val = chunk.get("text", "")
+            text_key = text_val.strip()[:200]
+            if text_key in seen:
+                continue
+            seen.add(text_key)
+
+            chunk_tokens = len(text_val) // CHARS_PER_TOKEN
+            if token_count + chunk_tokens > max_token_budget and selected:
+                break
+            if len(selected) >= max_chunks:
+                break
+
+            selected.append({
+                "text": text_val,
+                "page": chunk.get("page", chunk.get("chunk_page", 1)),
+                "section": chunk.get("section", chunk.get("chunk_section", "")),
+                "chunk_type": chunk.get("chunk_type", "paragraph"),
+                "score": round(score, 3),
+            })
+            token_count += chunk_tokens
+
+        # 5. Compliance entries (same as keyword-only mode)
+        cm_entries = self._filter_compliance(cm_categories)
+
+        logger.debug(
+            f"retrieve_hybrid('{section_name}'): "
+            f"{len(selected)} chunks (~{token_count} tok), "
+            f"kw_candidates={len(keyword_scored)}, "
+            f"sem_candidates={len(semantic_scored)}, "
+            f"{len(cm_entries)} compliance"
+        )
+
+        return RetrievedContext(
+            chunks=selected,
+            compliance_entries=cm_entries,
+            chunk_token_estimate=token_count,
+        )
 
     # ---- Scoring ----------------------------------------------------------
 
