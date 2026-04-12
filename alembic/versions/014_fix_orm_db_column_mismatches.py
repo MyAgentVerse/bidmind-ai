@@ -48,8 +48,18 @@ depends_on = None
 
 def upgrade() -> None:
     # === COMPANIES ===
-    # Rename industry -> industry_focus
-    op.execute("ALTER TABLE companies RENAME COLUMN industry TO industry_focus")
+    # Rename industry -> industry_focus (skip if already renamed)
+    op.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'companies' AND column_name = 'industry'
+            ) THEN
+                ALTER TABLE companies RENAME COLUMN industry TO industry_focus;
+            END IF;
+        END $$;
+    """)
 
     # Add missing columns
     op.execute("ALTER TABLE companies ADD COLUMN IF NOT EXISTS description TEXT")

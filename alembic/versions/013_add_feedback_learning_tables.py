@@ -29,7 +29,7 @@ depends_on = None
 def upgrade() -> None:
     # 1. proposal_preferences (org-level writing config)
     op.execute("""
-        CREATE TABLE proposal_preferences (
+        CREATE TABLE IF NOT EXISTS proposal_preferences (
             id UUID PRIMARY KEY,
             organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
             tone_level INTEGER DEFAULT 3,
@@ -48,11 +48,11 @@ def upgrade() -> None:
             CONSTRAINT uq_proposal_preferences_org UNIQUE (organization_id)
         )
     """)
-    op.execute("CREATE INDEX idx_org_preferences ON proposal_preferences (organization_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_org_preferences ON proposal_preferences (organization_id)")
 
     # 2. proposal_generations (tracks each AI generation)
     op.execute("""
-        CREATE TABLE proposal_generations (
+        CREATE TABLE IF NOT EXISTS proposal_generations (
             id UUID PRIMARY KEY,
             organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
             created_by UUID REFERENCES users(id),
@@ -68,13 +68,13 @@ def upgrade() -> None:
             regenerated_at TIMESTAMP
         )
     """)
-    op.execute("CREATE INDEX idx_org_proposals ON proposal_generations (organization_id, created_at)")
-    op.execute("CREATE INDEX idx_parent_proposal ON proposal_generations (parent_proposal_id)")
-    op.execute("CREATE INDEX idx_gen_created_by ON proposal_generations (created_by)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_org_proposals ON proposal_generations (organization_id, created_at)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_parent_proposal ON proposal_generations (parent_proposal_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_gen_created_by ON proposal_generations (created_by)")
 
     # 3. proposal_feedback (user ratings on proposals)
     op.execute("""
-        CREATE TABLE proposal_feedback (
+        CREATE TABLE IF NOT EXISTS proposal_feedback (
             id UUID PRIMARY KEY,
             organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
             proposal_id UUID NOT NULL REFERENCES proposal_generations(id) ON DELETE CASCADE,
@@ -88,13 +88,13 @@ def upgrade() -> None:
             updated_at TIMESTAMP DEFAULT NOW() NOT NULL
         )
     """)
-    op.execute("CREATE INDEX idx_proposal_feedback ON proposal_feedback (proposal_id)")
-    op.execute("CREATE INDEX idx_org_feedback ON proposal_feedback (organization_id, created_at)")
-    op.execute("CREATE INDEX idx_feedback_created_by ON proposal_feedback (created_by)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_proposal_feedback ON proposal_feedback (proposal_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_org_feedback ON proposal_feedback (organization_id, created_at)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_feedback_created_by ON proposal_feedback (created_by)")
 
     # 4. proposal_learnings (aggregated AI memory per org)
     op.execute("""
-        CREATE TABLE proposal_learnings (
+        CREATE TABLE IF NOT EXISTS proposal_learnings (
             id UUID PRIMARY KEY,
             organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
             total_proposals_generated INTEGER DEFAULT 0,
@@ -111,7 +111,7 @@ def upgrade() -> None:
             CONSTRAINT uq_proposal_learnings_org UNIQUE (organization_id)
         )
     """)
-    op.execute("CREATE INDEX idx_org_learnings ON proposal_learnings (organization_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_org_learnings ON proposal_learnings (organization_id)")
 
 
 def downgrade() -> None:

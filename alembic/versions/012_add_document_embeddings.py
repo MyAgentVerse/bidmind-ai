@@ -28,9 +28,11 @@ def upgrade() -> None:
     # Ensure pgvector extension is enabled
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-    # Create the table with a vector(1536) column via raw SQL
+    # Create the table with a vector(1536) column via raw SQL.
+    # Uses IF NOT EXISTS because init_db()'s create_all may have already
+    # created this table on a prior deploy.
     op.execute("""
-        CREATE TABLE document_embeddings (
+        CREATE TABLE IF NOT EXISTS document_embeddings (
             id UUID PRIMARY KEY,
             project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
             file_id UUID REFERENCES uploaded_files(id) ON DELETE CASCADE,
@@ -44,19 +46,20 @@ def upgrade() -> None:
         )
     """)
 
-    # Filtering indexes (used to scope vector search to a project)
+    # Filtering indexes (used to scope vector search to a project).
+    # IF NOT EXISTS prevents crashes when table was pre-created by init_db().
     op.execute(
-        "CREATE INDEX ix_document_embeddings_project_id "
+        "CREATE INDEX IF NOT EXISTS ix_document_embeddings_project_id "
         "ON document_embeddings (project_id)"
     )
     op.execute(
-        "CREATE INDEX ix_document_embeddings_file_id "
+        "CREATE INDEX IF NOT EXISTS ix_document_embeddings_file_id "
         "ON document_embeddings (file_id)"
     )
 
     # HNSW index for fast cosine-similarity search
     op.execute(
-        "CREATE INDEX ix_document_embeddings_embedding_hnsw "
+        "CREATE INDEX IF NOT EXISTS ix_document_embeddings_embedding_hnsw "
         "ON document_embeddings "
         "USING hnsw (embedding vector_cosine_ops)"
     )
