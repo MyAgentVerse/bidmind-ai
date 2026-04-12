@@ -53,16 +53,11 @@ class Settings(BaseSettings):
     @property
     def get_cors_origins(self) -> List[str]:
         """Parse CORS origins from comma-separated string."""
-        origins = [origin.strip() for origin in self.cors_origins.split(",")]
-
-        # In development, allow all origins for easier testing with Lovable
-        if self.environment == "development" or self.debug:
-            return ["*"]
-
-        # For production, return configured origins
-        # Note: Wildcard patterns won't work directly with CORSMiddleware,
-        # but specific origins like https://app.vercel.app will work
-        return origins
+        # Allow all origins — the API is protected by Bearer token auth,
+        # not cookies, so CORS restrictions add no security value.
+        # This also avoids the issue where CORSMiddleware doesn't support
+        # wildcard sub-domain patterns like https://*.lovable.dev.
+        return ["*"]
 
 
 @lru_cache()

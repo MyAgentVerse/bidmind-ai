@@ -37,11 +37,12 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-# Add CORS middleware
+# Add CORS middleware — allow all origins since auth uses Bearer tokens,
+# not cookies (allow_credentials is not needed).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.get_cors_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
