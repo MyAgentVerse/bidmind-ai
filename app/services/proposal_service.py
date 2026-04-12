@@ -421,7 +421,12 @@ class ProposalService:
                 if company_id and not project.company_id:
                     project.company_id = company_id
 
+            # Commit the proposal draft + project status FIRST
+            db.commit()
+            logger.info(f"Proposal saved for project {project_id}")
+
             # Phase 5: Record this generation for future feedback
+            # Done AFTER commit so a failure here can't roll back the proposal
             try:
                 if org_id:
                     learning_svc = LearningService()
@@ -434,10 +439,11 @@ class ProposalService:
                         writing_preferences=None,
                         db=db,
                     )
+                    db.commit()
             except Exception as e:
-                logger.debug(f"Failed to record generation (non-fatal): {e}")
+                db.rollback()
+                logger.warning(f"Failed to record generation (non-fatal): {e}")
 
-            db.commit()
             logger.info(f"Proposal generation completed for {project_id}")
             return proposal
 
