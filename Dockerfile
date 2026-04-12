@@ -32,9 +32,9 @@ RUN mkdir -p uploads
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/api/health')"
+# Health check — must use the same PORT that uvicorn binds to
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import os, httpx; httpx.get(f'http://localhost:{os.environ.get(\"PORT\", 8000)}/api/health')"
 
 # Run migrations then start the application.
 # alembic upgrade head ensures all schema changes (migrations 001-014+)
