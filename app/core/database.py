@@ -104,9 +104,10 @@ def init_db():
                 "ALTER TABLE proposal_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
                 "ALTER TABLE proposal_preferences ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
                 "ALTER TABLE proposal_learnings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
-                # created_by must be nullable since proposal generation
-                # runs without auth context
+                # created_by must be nullable since proposal/feedback endpoints
+                # can run without auth context
                 "ALTER TABLE proposal_generations ALTER COLUMN created_by DROP NOT NULL",
+                "ALTER TABLE proposal_feedback ALTER COLUMN created_by DROP NOT NULL",
             ]:
                 try:
                     conn.execute(text(stmt))

@@ -51,7 +51,7 @@ class ProposalFeedback(BaseModel):
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id"),
-        nullable=False,
+        nullable=True,
     )
     created_at = Column(DateTime, default=datetime.utcnow)
 
