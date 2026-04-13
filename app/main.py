@@ -34,7 +34,7 @@ settings = get_settings()
 app = FastAPI(
     title=settings.app_name,
     description="Document intelligence and proposal generation platform",
-    version="0.1.0",
+    version="0.2.0-staging",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
