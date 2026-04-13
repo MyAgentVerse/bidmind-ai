@@ -357,6 +357,19 @@ Experience: {company.experience or 'Not specified'}"""
                         )
                     continue
 
+                # Track OpenAI usage
+                try:
+                    if hasattr(response, "usage") and response.usage:
+                        from app.services.openai_tracker import log_openai_usage
+                        log_openai_usage(
+                            model=self.settings.openai_model,
+                            prompt_tokens=response.usage.prompt_tokens,
+                            completion_tokens=response.usage.completion_tokens,
+                            endpoint="analysis.analyze",
+                        )
+                except Exception:
+                    pass
+
                 response_text = response.choices[0].message.content or ""
                 last_response_text = response_text
 

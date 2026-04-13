@@ -346,7 +346,7 @@ class ProposalService:
 
                     # Generate
                     sections[section_name] = await self._generate_section(
-                        client, final_prompt
+                        client, final_prompt, section_name=section_name
                     )
 
             # 5. Phase 4: LLM-enhanced compliance review + targeted revision
@@ -494,7 +494,7 @@ class ProposalService:
         else:
             return retriever.retrieve_for_section(section_name)
 
-    async def _generate_section(self, client, prompt: str) -> str:
+    async def _generate_section(self, client, prompt: str, section_name: str = "") -> str:
         """Generate a single section using the shared AsyncOpenAI client."""
         try:
             response = await client.chat.completions.create(
@@ -502,6 +502,21 @@ class ProposalService:
                 max_tokens=3000,
                 messages=[{"role": "user", "content": prompt}],
             )
+
+            # Track OpenAI usage (non-invasive, won't crash if fails)
+            try:
+                if hasattr(response, "usage") and response.usage:
+                    from app.services.openai_tracker import log_openai_usage
+                    log_openai_usage(
+                        model=self.settings.openai_model,
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        endpoint="proposal.generate_section",
+                        section=section_name,
+                    )
+            except Exception:
+                pass
+
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Error generating section: {e}")
