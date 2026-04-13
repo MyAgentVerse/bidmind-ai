@@ -3,10 +3,13 @@ Proposal Generation and Feedback API Routes
 Endpoints for managing proposals and feedback
 """
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
@@ -154,7 +157,7 @@ async def get_proposal(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    await check_org_access(proposal.organization_id, current_user, db)
+    check_org_access(current_user, str(proposal.organization_id), db)
 
     return proposal.to_dict_full()
 
@@ -185,7 +188,7 @@ async def submit_feedback(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    await check_org_access(proposal.organization_id, current_user, db)
+    check_org_access(current_user, str(proposal.organization_id), db)
 
     # Create feedback
     feedback = ProposalFeedback(
@@ -223,7 +226,7 @@ async def get_proposal_feedback(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    await check_org_access(proposal.organization_id, current_user, db)
+    check_org_access(current_user, str(proposal.organization_id), db)
 
     feedback_list = db.query(ProposalFeedback).filter(
         ProposalFeedback.proposal_id == proposal_id
@@ -250,7 +253,7 @@ async def regenerate_proposal(
     if not original_proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    await check_org_access(original_proposal.organization_id, current_user, db)
+    check_org_access(current_user, str(original_proposal.organization_id), db)
 
     # Create new proposal generation
     new_proposal = ProposalGeneration(
@@ -295,24 +298,32 @@ async def get_proposal_analytics(
     db: Session = Depends(get_db)
 ):
     """Get AI learning analytics for organization"""
-    check_org_access(current_user, str(org_id), db)
+    try:
+        check_org_access(current_user, str(org_id), db)
 
-    learnings = db.query(ProposalLearnings).filter(
-        ProposalLearnings.organization_id == org_id
-    ).first()
+        learnings = db.query(ProposalLearnings).filter(
+            ProposalLearnings.organization_id == org_id
+        ).first()
 
-    if not learnings:
-        # Create default learnings if doesn't exist
-        learnings = ProposalLearnings(organization_id=org_id)
-        db.add(learnings)
-        db.commit()
-        db.refresh(learnings)
+        if not learnings:
+            # Create default learnings if doesn't exist
+            learnings = ProposalLearnings(organization_id=org_id)
+            db.add(learnings)
+            db.commit()
+            db.refresh(learnings)
 
-    analytics_dict = learnings.to_dict()
-    analytics_dict["avg_rating"] = learnings.get_avg_rating()
-    analytics_dict["satisfaction_percentage"] = learnings.get_satisfaction_percentage()
+        analytics_dict = learnings.to_dict()
+        analytics_dict["avg_rating"] = learnings.get_avg_rating()
+        analytics_dict["satisfaction_percentage"] = learnings.get_satisfaction_percentage()
 
-    return analytics_dict
+        return analytics_dict
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Analytics error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analytics failed: {str(e)}")
 
 
 @router.get("/feedback/history/{org_id}", response_model=list)
