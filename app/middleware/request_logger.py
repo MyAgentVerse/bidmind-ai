@@ -50,33 +50,33 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
             path = request.url.path
             method = request.method
 
-            # Skip noisy paths
+            # Skip noisy paths — but never return from finally (kills the response)
             if path in ("/api/health", "/api/docs", "/api/openapi.json", "/"):
-                return
+                pass
+            else:
+                record = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "method": method,
+                    "path": path,
+                    "status": status_code,
+                    "duration_ms": duration_ms,
+                    "client": request.client.host if request.client else None,
+                    "error": error_detail,
+                }
 
-            record = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "method": method,
-                "path": path,
-                "status": status_code,
-                "duration_ms": duration_ms,
-                "client": request.client.host if request.client else None,
-                "error": error_detail,
-            }
+                # Log errors to memory buffer
+                if status_code >= 400 or error_detail:
+                    record["query"] = str(request.url.query) if request.url.query else None
+                    _recent_errors.append(record)
+                    if len(_recent_errors) > _MAX_ERRORS:
+                        _recent_errors.pop(0)
 
-            # Log errors to memory buffer
-            if status_code >= 400 or error_detail:
-                record["query"] = str(request.url.query) if request.url.query else None
-                _recent_errors.append(record)
-                if len(_recent_errors) > _MAX_ERRORS:
-                    _recent_errors.pop(0)
-
-            # Write to file (async-safe via append)
-            try:
-                with open(REQUEST_LOG_PATH, "a") as f:
-                    f.write(json.dumps(record) + "\n")
-            except Exception:
-                pass  # Don't crash the app for logging
+                # Write to file (async-safe via append)
+                try:
+                    with open(REQUEST_LOG_PATH, "a") as f:
+                        f.write(json.dumps(record) + "\n")
+                except Exception:
+                    pass  # Don't crash the app for logging
 
 
 def get_recent_errors(limit: int = 50) -> List[Dict]:
