@@ -87,3 +87,36 @@ async def admin_errors(limit: int = Query(50, le=200)):
         "errors": get_recent_errors(limit=limit),
         "stats": get_request_stats(),
     }
+
+
+# ==================== DRILL-DOWN ENDPOINTS ====================
+
+
+@router.get("/users/{user_id}")
+async def admin_user_detail(user_id: str, db: Session = Depends(get_db)):
+    """Deep drill-down for a single user — their full journey."""
+    try:
+        svc = AdminDashboardService(db)
+        return svc.get_user_detail(user_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/projects/{project_id}")
+async def admin_project_detail(project_id: str, db: Session = Depends(get_db)):
+    """Deep drill-down for a single project — every step of the pipeline."""
+    try:
+        svc = AdminDashboardService(db)
+        return svc.get_project_detail(project_id)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/organizations/{org_id}")
+async def admin_org_detail(org_id: str, db: Session = Depends(get_db)):
+    """Drill-down for an organization — members, projects, feedback, learnings."""
+    try:
+        svc = AdminDashboardService(db)
+        return svc.get_org_detail(org_id)
+    except Exception as e:
+        return {"error": str(e)}
