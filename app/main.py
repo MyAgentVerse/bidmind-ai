@@ -58,6 +58,10 @@ async def startup_event():
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"Debug mode: {settings.debug}")
 
+    # Block production from running with default secret key
+    if settings.environment == "production" and "local-dev-only" in settings.secret_key:
+        raise RuntimeError("SECRET_KEY env var must be set in production")
+
     # Initialize database
     try:
         init_db()
