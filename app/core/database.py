@@ -104,6 +104,11 @@ def init_db():
                 "ALTER TABLE proposal_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
                 "ALTER TABLE proposal_preferences ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
                 "ALTER TABLE proposal_learnings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE proposal_learnings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
+                # Same for other Phase 5 tables
+                "ALTER TABLE proposal_generations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE proposal_feedback ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE proposal_preferences ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
                 # created_by must be nullable since proposal/feedback endpoints
                 # can run without auth context
                 "ALTER TABLE proposal_generations ALTER COLUMN created_by DROP NOT NULL",
