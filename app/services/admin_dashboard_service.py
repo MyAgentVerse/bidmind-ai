@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
 from app.models.user import User
-from app.models.organization import Organization, UserOrganization
+from app.models.organization import Organization
+from app.models.user_organization import UserOrganization
 from app.models.project import Project
 from app.models.company import Company
 from app.models.analysis_result import AnalysisResult
