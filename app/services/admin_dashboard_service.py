@@ -21,8 +21,6 @@ from app.models.uploaded_file import UploadedFile
 from app.models.proposal_generation import ProposalGeneration
 from app.models.proposal_feedback import ProposalFeedback
 from app.models.proposal_learnings import ProposalLearnings
-from app.models.company import CompanyWritingPreferences
-
 logger = logging.getLogger(__name__)
 
 
