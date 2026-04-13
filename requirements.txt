@@ -18,3 +18,4 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2
 pgvector==0.3.6
+stripe>=7.0.0

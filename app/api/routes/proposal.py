@@ -8,9 +8,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models import Project, ProposalDraft
+from app.models import Project, ProposalDraft, Organization
 from app.models.proposal_generation import ProposalGeneration
 from app.models.proposal_feedback import ProposalFeedback
+from app.services import subscription_service
 from app.schemas.proposal import ProposalResponse, ProposalUpdate, ProposalSectionUpdate
 from app.schemas.common import SuccessResponse
 from app.utils.response_helpers import create_success_response, MESSAGES
@@ -42,6 +43,12 @@ async def generate_proposal(
                 detail=MESSAGES["PROJECT_NOT_FOUND"]
             )
 
+        # Subscription: check proposal usage limit
+        if project.organization_id:
+            org = db.query(Organization).filter(Organization.id == project.organization_id).first()
+            if org:
+                subscription_service.check_usage_limit(org, "proposal_generated", db)
+
         # Run proposal generation with company context
         # Use company_id from request body if provided, otherwise from project
         company_id = request.company_id or project.company_id
@@ -52,6 +59,10 @@ async def generate_proposal(
                 db,
                 company_id=company_id
             )
+
+            # Subscription: increment usage after successful generation
+            if project.organization_id:
+                subscription_service.increment_usage(project.organization_id, "proposal_generated", db)
 
             if company_id:
                 logger.info(f"Proposal generated with company context for project {project_id}")
@@ -93,6 +104,12 @@ async def generate_proposal_endpoint(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=MESSAGES["PROJECT_NOT_FOUND"]
             )
+
+        # Subscription: check proposal usage limit
+        if project.organization_id:
+            org = db.query(Organization).filter(Organization.id == project.organization_id).first()
+            if org:
+                subscription_service.check_usage_limit(org, "proposal_generated", db)
 
         # Verify analysis exists
         from app.models import AnalysisResult

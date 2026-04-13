@@ -25,6 +25,14 @@ class Organization(BaseModel):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
 
+    # Subscription
+    subscription_tier = Column(String(20), default="none", nullable=False)  # none, starter, pro
+    subscription_status = Column(String(20), default="inactive", nullable=False)  # inactive, active, cancelled, past_due
+    stripe_customer_id = Column(String(255), nullable=True, unique=True)
+    stripe_subscription_id = Column(String(255), nullable=True)  # null for starter (one-time)
+    subscription_started_at = Column(DateTime, nullable=True)
+    subscription_ends_at = Column(DateTime, nullable=True)  # grace period for cancelled pro
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

@@ -6,7 +6,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import token_manager
-from app.models import User
+from app.models import User, Organization
+from app.services import subscription_service
 
 logger = logging.getLogger(__name__)
 
@@ -107,3 +108,28 @@ async def get_current_active_user(
         Current active User
     """
     return current_user
+
+
+def require_feature(feature: str):
+    """
+    FastAPI dependency factory that checks subscription tier for a feature.
+
+    Usage:
+        @router.post("/ai-edit")
+        async def ai_edit(..., org=Depends(require_feature("ai_edit"))):
+    """
+    async def dependency(
+        org_id: str,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> Organization:
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if not org:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Organization not found",
+            )
+        subscription_service.check_feature_access(org, feature)
+        return org
+
+    return dependency

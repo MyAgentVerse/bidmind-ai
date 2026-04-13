@@ -20,6 +20,7 @@ from app.api.routes import (
     ai_edit_router,
     export_router,
     proposals_router,
+    billing_router,
 )
 from app.api.routes.admin import router as admin_router
 from app.middleware.request_logger import RequestLoggerMiddleware
@@ -97,6 +98,7 @@ app.include_router(proposal_router)
 app.include_router(ai_edit_router)
 app.include_router(export_router)
 app.include_router(proposals_router)
+app.include_router(billing_router)
 app.include_router(admin_router)
 
 # Request/error logging middleware (after CORS, before routes process)
