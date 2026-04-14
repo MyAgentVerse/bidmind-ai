@@ -7,19 +7,19 @@ import stripe
 from sqlalchemy.orm import Session
 
 
-def _to_plain_dict(obj):
-    """Recursively convert mapping-like objects (incl. StripeObject) to plain dicts.
+def _g(obj, key, default=None):
+    """Safe key access that works for both plain dicts and StripeObject.
 
-    In stripe-python 7+, StripeObject is no longer a dict subclass but still
-    exposes keys() and __getitem__, so we duck-type instead of isinstance(dict).
+    StripeObject in stripe-python 7+ doesn't expose .get(), so we use
+    bracket indexing (which both types support) wrapped in try/except.
     """
-    if isinstance(obj, (str, bytes, int, float, bool)) or obj is None:
-        return obj
-    if isinstance(obj, list):
-        return [_to_plain_dict(v) for v in obj]
-    if hasattr(obj, "keys") and hasattr(obj, "__getitem__"):
-        return {k: _to_plain_dict(obj[k]) for k in obj.keys()}
-    return obj
+    if obj is None:
+        return default
+    try:
+        val = obj[key]
+    except (KeyError, TypeError, AttributeError):
+        return default
+    return val if val is not None else default
 
 from app.core.config import get_settings
 from app.models.organization import Organization
@@ -101,7 +101,7 @@ def handle_webhook_event(payload: bytes, sig_header: str, db: Session) -> dict:
         raise ValueError("Invalid Stripe webhook signature")
 
     event_type = event["type"]
-    data = _to_plain_dict(event["data"]["object"])
+    data = event["data"]["object"]
 
     logger.info(f"Stripe webhook: {event_type}")
 
@@ -119,10 +119,11 @@ def handle_webhook_event(payload: bytes, sig_header: str, db: Session) -> dict:
 
 def _handle_checkout_completed(session_data: dict, db: Session) -> None:
     """Activate subscription after successful checkout."""
-    org_id = session_data.get("metadata", {}).get("organization_id")
-    tier = session_data.get("metadata", {}).get("tier")
-    customer_id = session_data.get("customer")
-    subscription_id = session_data.get("subscription")  # None for one-time payments
+    metadata = _g(session_data, "metadata", {})
+    org_id = _g(metadata, "organization_id")
+    tier = _g(metadata, "tier")
+    customer_id = _g(session_data, "customer")
+    subscription_id = _g(session_data, "subscription")  # None for one-time payments
 
     if not org_id or not tier:
         logger.warning("Checkout completed but missing org_id or tier in metadata")
@@ -146,7 +147,7 @@ def _handle_checkout_completed(session_data: dict, db: Session) -> None:
 
 def _handle_payment_failed(invoice_data: dict, db: Session) -> None:
     """Mark subscription as past_due when payment fails."""
-    customer_id = invoice_data.get("customer")
+    customer_id = _g(invoice_data, "customer")
     if not customer_id:
         return
 
@@ -161,7 +162,7 @@ def _handle_payment_failed(invoice_data: dict, db: Session) -> None:
 
 def _handle_subscription_deleted(sub_data: dict, db: Session) -> None:
     """Handle subscription cancellation — set end date for grace period."""
-    customer_id = sub_data.get("customer")
+    customer_id = _g(sub_data, "customer")
     if not customer_id:
         return
 
@@ -170,7 +171,7 @@ def _handle_subscription_deleted(sub_data: dict, db: Session) -> None:
         return
 
     # current_period_end is when access should expire
-    period_end = sub_data.get("current_period_end")
+    period_end = _g(sub_data, "current_period_end")
     if period_end:
         org.subscription_ends_at = datetime.fromtimestamp(period_end, tz=timezone.utc)
 
@@ -181,7 +182,7 @@ def _handle_subscription_deleted(sub_data: dict, db: Session) -> None:
 
 def _handle_subscription_updated(sub_data: dict, db: Session) -> None:
     """Handle subscription updates (e.g., plan changes)."""
-    customer_id = sub_data.get("customer")
+    customer_id = _g(sub_data, "customer")
     if not customer_id:
         return
 
@@ -190,7 +191,7 @@ def _handle_subscription_updated(sub_data: dict, db: Session) -> None:
         return
 
     # Update status based on Stripe subscription status
-    stripe_status = sub_data.get("status")
+    stripe_status = _g(sub_data, "status")
     status_map = {
         "active": "active",
         "past_due": "past_due",
