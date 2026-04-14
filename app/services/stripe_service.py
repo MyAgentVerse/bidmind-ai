@@ -8,15 +8,17 @@ from sqlalchemy.orm import Session
 
 
 def _to_plain_dict(obj):
-    """Recursively convert StripeObject (dict subclass) trees to plain dicts/lists.
+    """Recursively convert mapping-like objects (incl. StripeObject) to plain dicts.
 
-    StripeObject's .get() isn't reliably available across SDK versions, so we
-    normalize the whole payload up front.
+    In stripe-python 7+, StripeObject is no longer a dict subclass but still
+    exposes keys() and __getitem__, so we duck-type instead of isinstance(dict).
     """
-    if isinstance(obj, dict):
-        return {k: _to_plain_dict(v) for k, v in obj.items()}
+    if isinstance(obj, (str, bytes, int, float, bool)) or obj is None:
+        return obj
     if isinstance(obj, list):
         return [_to_plain_dict(v) for v in obj]
+    if hasattr(obj, "keys") and hasattr(obj, "__getitem__"):
+        return {k: _to_plain_dict(obj[k]) for k in obj.keys()}
     return obj
 
 from app.core.config import get_settings
