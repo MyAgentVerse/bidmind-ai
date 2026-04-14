@@ -1,6 +1,6 @@
 """Organization model for multi-tenant SaaS."""
 
-from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy import Boolean, Column, String, Text, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
@@ -32,6 +32,7 @@ class Organization(BaseModel):
     stripe_subscription_id = Column(String(255), nullable=True)  # null for starter (one-time)
     subscription_started_at = Column(DateTime, nullable=True)
     subscription_ends_at = Column(DateTime, nullable=True)  # grace period for cancelled pro
+    has_lifetime_starter = Column(Boolean, nullable=False, default=False)  # paid $59 once — keeps Starter access forever
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

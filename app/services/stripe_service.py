@@ -141,6 +141,11 @@ def _handle_checkout_completed(session_data: dict, db: Session) -> None:
     org.subscription_started_at = datetime.now(timezone.utc)
     org.subscription_ends_at = None  # Starter = forever, Pro = managed by Stripe
 
+    # Starter is a one-time lifetime purchase — remember it forever so that if the
+    # user later buys Pro and that lapses, they fall back to Starter instead of none.
+    if tier == "starter":
+        org.has_lifetime_starter = True
+
     db.commit()
     logger.info(f"Subscription activated: org={org_id}, tier={tier}")
 

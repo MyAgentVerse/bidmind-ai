@@ -50,17 +50,23 @@ async def create_checkout(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    # Don't allow re-subscribing if already active
-    if org.subscription_status == "active" and org.subscription_tier != "none":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Organization already has an active {org.subscription_tier} subscription.",
-        )
-
     if request.tier not in ("starter", "pro"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Tier must be 'starter' or 'pro'.",
+        )
+
+    # Block re-purchasing the same tier. Starter→Pro upgrade is allowed; the
+    # $59 Starter receipt stays valid as lifetime fallback after Pro lapses.
+    if org.subscription_status == "active" and org.subscription_tier == request.tier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Organization already has an active {request.tier} subscription.",
+        )
+    if request.tier == "starter" and org.has_lifetime_starter:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization already has lifetime Starter access.",
         )
 
     try:

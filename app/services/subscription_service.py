@@ -40,18 +40,43 @@ def get_tier_limits(tier: str) -> Optional[dict]:
     return TIER_LIMITS.get(tier)
 
 
+def effective_tier(org: Organization) -> str:
+    """Return the tier the user currently has access to.
+
+    Precedence:
+      1. Active Pro (or cancelled Pro still inside its paid period) → "pro"
+      2. Active Starter → "starter"
+      3. has_lifetime_starter flag (they paid $59 once) → "starter"
+      4. None
+    """
+    now = datetime.now(timezone.utc)
+
+    pro_still_paid = (
+        org.subscription_tier == "pro"
+        and (
+            org.subscription_status == "active"
+            or (
+                org.subscription_status == "cancelled"
+                and org.subscription_ends_at
+                and org.subscription_ends_at > now
+            )
+        )
+    )
+    if pro_still_paid:
+        return "pro"
+
+    if org.subscription_tier == "starter" and org.subscription_status == "active":
+        return "starter"
+
+    if getattr(org, "has_lifetime_starter", False):
+        return "starter"
+
+    return "none"
+
+
 def is_subscription_active(org: Organization) -> bool:
-    """Check if the org has an active paid subscription."""
-    if org.subscription_status != "active":
-        # Allow cancelled Pro users until their period ends
-        if (
-            org.subscription_status == "cancelled"
-            and org.subscription_ends_at
-            and org.subscription_ends_at > datetime.now(timezone.utc)
-        ):
-            return True
-        return False
-    return org.subscription_tier in ("starter", "pro")
+    """Check if the org has an active paid subscription (incl. lifetime Starter)."""
+    return effective_tier(org) in ("starter", "pro")
 
 
 def check_feature_access(org: Organization, feature: str) -> None:
@@ -62,7 +87,8 @@ def check_feature_access(org: Organization, feature: str) -> None:
             detail="Active subscription required. Please subscribe to access this feature.",
         )
 
-    limits = get_tier_limits(org.subscription_tier)
+    tier = effective_tier(org)
+    limits = get_tier_limits(tier)
     if not limits:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -72,7 +98,7 @@ def check_feature_access(org: Organization, feature: str) -> None:
     if feature not in limits["features"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"This feature requires the Pro plan. Your current plan: {org.subscription_tier}.",
+            detail=f"This feature requires the Pro plan. Your current plan: {tier}.",
         )
 
 
@@ -105,7 +131,8 @@ def check_usage_limit(org: Organization, usage_type: str, db: Session) -> None:
             detail="Active subscription required.",
         )
 
-    limits = get_tier_limits(org.subscription_tier)
+    tier = effective_tier(org)
+    limits = get_tier_limits(tier)
     if not limits:
         return
 
@@ -132,7 +159,7 @@ def check_usage_limit(org: Organization, usage_type: str, db: Session) -> None:
         if active_count >= max_allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Project limit reached ({max_allowed} active projects on {org.subscription_tier} plan). Upgrade to Pro for unlimited projects.",
+                detail=f"Project limit reached ({max_allowed} active projects on {tier} plan). Upgrade to Pro for unlimited projects.",
             )
         return
 
@@ -140,7 +167,7 @@ def check_usage_limit(org: Organization, usage_type: str, db: Session) -> None:
     if current >= max_allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Monthly limit reached ({max_allowed} {usage_type.replace('_', ' ')}s on {org.subscription_tier} plan). Upgrade to Pro for unlimited usage.",
+            detail=f"Monthly limit reached ({max_allowed} {usage_type.replace('_', ' ')}s on {tier} plan). Upgrade to Pro for unlimited usage.",
         )
 
 
@@ -170,7 +197,8 @@ def check_member_limit(org: Organization, db: Session) -> None:
             detail="Active subscription required.",
         )
 
-    limits = get_tier_limits(org.subscription_tier)
+    tier = effective_tier(org)
+    limits = get_tier_limits(tier)
     if not limits or limits["max_members"] is None:
         return  # unlimited
 
@@ -183,13 +211,14 @@ def check_member_limit(org: Organization, db: Session) -> None:
     if current_members >= limits["max_members"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Member limit reached ({limits['max_members']} on {org.subscription_tier} plan). Upgrade to Pro for unlimited team members.",
+            detail=f"Member limit reached ({limits['max_members']} on {tier} plan). Upgrade to Pro for unlimited team members.",
         )
 
 
 def get_usage_stats(org: Organization, db: Session) -> dict:
     """Return current usage + limits for the frontend usage meter."""
-    limits = get_tier_limits(org.subscription_tier) or {}
+    tier = effective_tier(org)
+    limits = get_tier_limits(tier) or {}
 
     from app.models.project import Project
     active_projects = (
@@ -208,7 +237,7 @@ def get_usage_stats(org: Organization, db: Session) -> dict:
     )
 
     return {
-        "tier": org.subscription_tier,
+        "tier": tier,
         "status": org.subscription_status,
         "proposals": {
             "used": proposals_this_month,
