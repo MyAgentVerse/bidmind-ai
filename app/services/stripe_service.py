@@ -88,6 +88,10 @@ def handle_webhook_event(payload: bytes, sig_header: str, db: Session) -> dict:
     event_type = event["type"]
     data = event["data"]["object"]
 
+    # StripeObject doesn't support .get() in newer SDK versions; convert to plain dict
+    if hasattr(data, "to_dict_recursive"):
+        data = data.to_dict_recursive()
+
     logger.info(f"Stripe webhook: {event_type}")
 
     if event_type == "checkout.session.completed":
