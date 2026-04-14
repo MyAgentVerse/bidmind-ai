@@ -1,11 +1,23 @@
 """Stripe integration for checkout, subscriptions, and webhooks."""
 
-import json
 import logging
 from datetime import datetime, timezone
 
 import stripe
 from sqlalchemy.orm import Session
+
+
+def _to_plain_dict(obj):
+    """Recursively convert StripeObject (dict subclass) trees to plain dicts/lists.
+
+    StripeObject's .get() isn't reliably available across SDK versions, so we
+    normalize the whole payload up front.
+    """
+    if isinstance(obj, dict):
+        return {k: _to_plain_dict(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_plain_dict(v) for v in obj]
+    return obj
 
 from app.core.config import get_settings
 from app.models.organization import Organization
@@ -87,9 +99,7 @@ def handle_webhook_event(payload: bytes, sig_header: str, db: Session) -> dict:
         raise ValueError("Invalid Stripe webhook signature")
 
     event_type = event["type"]
-    # StripeObject doesn't expose .get() in newer SDK versions. JSON round-trip
-    # gives us a plain nested dict so downstream handlers can use standard access.
-    data = json.loads(json.dumps(event["data"]["object"], default=str))
+    data = _to_plain_dict(event["data"]["object"])
 
     logger.info(f"Stripe webhook: {event_type}")
 
