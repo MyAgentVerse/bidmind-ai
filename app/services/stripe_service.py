@@ -1,5 +1,6 @@
 """Stripe integration for checkout, subscriptions, and webhooks."""
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -86,11 +87,9 @@ def handle_webhook_event(payload: bytes, sig_header: str, db: Session) -> dict:
         raise ValueError("Invalid Stripe webhook signature")
 
     event_type = event["type"]
-    data = event["data"]["object"]
-
-    # StripeObject doesn't support .get() in newer SDK versions; convert to plain dict
-    if hasattr(data, "to_dict_recursive"):
-        data = data.to_dict_recursive()
+    # StripeObject doesn't expose .get() in newer SDK versions. JSON round-trip
+    # gives us a plain nested dict so downstream handlers can use standard access.
+    data = json.loads(json.dumps(event["data"]["object"], default=str))
 
     logger.info(f"Stripe webhook: {event_type}")
 
