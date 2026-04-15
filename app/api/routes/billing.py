@@ -145,12 +145,17 @@ async def get_subscription(
 
     usage = subscription_service.get_usage_stats(org, db)
 
+    # Determine what happens after Pro ends, if relevant
+    fallback_tier = "starter" if org.has_lifetime_starter else "none"
+
     return {
         "subscription": {
             "tier": org.subscription_tier,
             "status": org.subscription_status,
             "started_at": org.subscription_started_at.isoformat() if org.subscription_started_at else None,
             "ends_at": org.subscription_ends_at.isoformat() if org.subscription_ends_at else None,
+            "has_lifetime_starter": org.has_lifetime_starter,
+            "fallback_tier_on_end": fallback_tier,  # "starter" or "none" — shown to cancelled Pro users
         },
         "usage": usage,
     }
