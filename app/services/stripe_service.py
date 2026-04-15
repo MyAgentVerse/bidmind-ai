@@ -141,9 +141,11 @@ def _handle_checkout_completed(session_data: dict, db: Session) -> None:
     org.subscription_started_at = datetime.now(timezone.utc)
     org.subscription_ends_at = None  # Starter = forever, Pro = managed by Stripe
 
-    # Any paid purchase (Starter OR Pro) grants lifetime Starter access.
-    # That way a Pro buyer who cancels still falls back to Starter instead of none.
-    org.has_lifetime_starter = True
+    # Only explicit Starter purchase grants lifetime Starter access.
+    # Bundling it into Pro would create an arbitrage: subscribe Pro for $29,
+    # cancel immediately, keep Starter forever — effectively Starter for $29.
+    if tier == "starter":
+        org.has_lifetime_starter = True
 
     db.commit()
     logger.info(f"Subscription activated: org={org_id}, tier={tier}")
