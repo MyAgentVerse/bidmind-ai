@@ -12,6 +12,13 @@ from app.models.usage_record import UsageRecord
 
 # Centralized tier definitions — single source of truth
 TIER_LIMITS = {
+    "none": {
+        "max_members": 1,
+        "max_proposals_per_month": 0,
+        "max_active_projects": 0,
+        "max_company_profiles": 0,
+        "features": set(),
+    },
     "starter": {
         "max_members": 1,
         "max_proposals_per_month": 5,
