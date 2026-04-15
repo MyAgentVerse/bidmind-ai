@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173,https://*.lovable.dev,https://*.vercel.app,https://localhost:3000"
 
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_starter_price_id: str = ""  # one-time $59 price from Stripe dashboard
+    stripe_pro_price_id: str = ""  # recurring $29/month price from Stripe dashboard
+
     # Server
     server_host: str = "0.0.0.0"
     server_port: int = 8000

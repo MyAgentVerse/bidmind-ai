@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models import Project
+from app.models import Project, Organization
+from app.services import subscription_service
 from app.schemas.ai_edit import AIEditRequest, AIEditResponse
 from app.schemas.common import SuccessResponse
 from app.utils.response_helpers import create_success_response, MESSAGES
@@ -27,6 +28,12 @@ async def ai_edit_section(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=MESSAGES["PROJECT_NOT_FOUND"]
             )
+
+        # Subscription: AI editing is Pro only
+        if project.organization_id:
+            org = db.query(Organization).filter(Organization.id == project.organization_id).first()
+            if org:
+                subscription_service.check_feature_access(org, "ai_edit")
 
         # Perform AI edit
         try:

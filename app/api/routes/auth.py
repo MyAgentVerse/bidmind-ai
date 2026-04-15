@@ -100,6 +100,14 @@ async def signup(
                     detail="Invalid or expired invite code"
                 )
 
+            # Block joining Starter orgs (solo only)
+            target_org = db.query(Organization).filter(Organization.id == invite.organization_id).first()
+            if target_org and target_org.subscription_tier == "starter":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This organization is on the Starter plan (solo only). The owner must upgrade to Pro to add team members."
+                )
+
             # Add user to invited organization
             user_org_from_invite = UserOrganization(
                 user_id=user.id,
@@ -344,7 +352,9 @@ async def get_current_user_info(
                 organizations.append({
                     "id": str(org.id),
                     "name": org.name,
-                    "role": uo.role
+                    "role": uo.role,
+                    "subscription_tier": org.subscription_tier,
+                    "subscription_status": org.subscription_status,
                 })
 
         return {
@@ -552,6 +562,14 @@ async def join_organization_with_invite(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired invite code"
+            )
+
+        # Block joining Starter orgs (solo only)
+        target_org = db.query(Organization).filter(Organization.id == invite.organization_id).first()
+        if target_org and target_org.subscription_tier == "starter":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This organization is on the Starter plan (solo only). The owner must upgrade to Pro to add team members."
             )
 
         # Check if user already in organization

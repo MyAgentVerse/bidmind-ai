@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models import User, Organization, UserOrganization, OrganizationInvite
+from app.services import subscription_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/organizations", tags=["organizations"])
@@ -63,6 +64,8 @@ async def list_organizations(
                     "name": org.name,
                     "description": org.description,
                     "role": uo.role,
+                    "subscription_tier": org.subscription_tier,
+                    "subscription_status": org.subscription_status,
                     "created_at": org.created_at.isoformat()
                 })
 
@@ -183,6 +186,8 @@ async def get_organization(
             "id": str(org.id),
             "name": org.name,
             "description": org.description,
+            "subscription_tier": org.subscription_tier,
+            "subscription_status": org.subscription_status,
             "members": members,
             "member_count": len(members),
             "created_at": org.created_at.isoformat()
@@ -322,6 +327,12 @@ async def add_member(
     """
     try:
         check_org_access(current_user, org_id, db, required_role="admin")
+
+        # Subscription: team invites are Pro only
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if org:
+            subscription_service.check_feature_access(org, "team_invites")
+            subscription_service.check_member_limit(org, db)
 
         user_id = request.get("user_id")
         role = request.get("role", "member")
@@ -528,6 +539,11 @@ async def generate_invite_code(
     """
     try:
         check_org_access(current_user, org_id, db, required_role="admin")
+
+        # Subscription: team invites are Pro only
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if org:
+            subscription_service.check_feature_access(org, "team_invites")
 
         # Generate unique code
         code = OrganizationInvite.generate_code()

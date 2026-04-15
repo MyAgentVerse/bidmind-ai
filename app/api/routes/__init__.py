@@ -14,6 +14,7 @@ from .proposal import router as proposal_router
 from .ai_edit import router as ai_edit_router
 from .export import router as export_router
 from .proposals import router as proposals_router
+from .billing import router as billing_router
 
 __all__ = [
     "health_router",
@@ -30,4 +31,5 @@ __all__ = [
     "ai_edit_router",
     "export_router",
     "proposals_router",
+    "billing_router",
 ]

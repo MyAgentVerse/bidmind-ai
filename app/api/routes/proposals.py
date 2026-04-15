@@ -20,6 +20,7 @@ from app.models.proposal_feedback import ProposalFeedback
 from app.models.proposal_preferences import ProposalPreferences
 from app.models.proposal_learnings import ProposalLearnings
 from app.api.routes.organizations import check_org_access
+from app.services import subscription_service
 from app.services.proposal_analytics import ProposalAnalyticsService
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -189,6 +190,10 @@ async def submit_feedback(
         raise HTTPException(status_code=404, detail="Proposal not found")
 
     check_org_access(current_user, str(proposal.organization_id), db)
+
+    # Pro-only: feedback drives the learning loop
+    org = db.query(Organization).filter(Organization.id == proposal.organization_id).first()
+    subscription_service.check_feature_access(org, "learning_loop")
 
     # Create feedback
     feedback = ProposalFeedback(

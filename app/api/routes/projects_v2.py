@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models import User, Project, Organization, UserOrganization
+from app.services import subscription_service
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,11 @@ async def create_project(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have access to this organization"
             )
+
+        # Subscription: check active project limit
+        org = db.query(Organization).filter(Organization.id == org_id).first()
+        if org:
+            subscription_service.check_usage_limit(org, "project_created", db)
 
         # Create project
         project = Project(

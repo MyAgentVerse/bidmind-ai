@@ -16,6 +16,7 @@ from .proposal_generation import ProposalGeneration
 from .proposal_feedback import ProposalFeedback
 from .proposal_learnings import ProposalLearnings
 from .document_embedding import DocumentEmbedding
+from .usage_record import UsageRecord
 
 __all__ = [
     "Company",
@@ -34,4 +35,5 @@ __all__ = [
     "ProposalFeedback",
     "ProposalLearnings",
     "DocumentEmbedding",
+    "UsageRecord",
 ]

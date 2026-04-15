@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models import Company, CompanyWritingPreferences, Organization, User, UserOrganization
+from app.services import subscription_service
 from app.schemas.writing_preferences import (
     WritingPreferencesCreate,
     WritingPreferencesUpdate,
@@ -79,8 +80,9 @@ async def create_writing_preferences(
 ) -> SuccessResponse:
     """Create writing preferences for the selected organization's company profile."""
     try:
-        _get_org_or_404(db, organization_id)
+        org = _get_org_or_404(db, organization_id)
         _assert_user_in_org(db, current_user.id, organization_id)
+        subscription_service.check_feature_access(org, "advanced_writing_prefs")
         company = _get_company_or_404_by_org(db, organization_id)
 
         existing = (
@@ -181,8 +183,9 @@ async def update_writing_preferences(
 ) -> SuccessResponse:
     """Update writing preferences for the selected organization's company profile."""
     try:
-        _get_org_or_404(db, organization_id)
+        org = _get_org_or_404(db, organization_id)
         _assert_user_in_org(db, current_user.id, organization_id)
+        subscription_service.check_feature_access(org, "advanced_writing_prefs")
         company = _get_company_or_404_by_org(db, organization_id)
 
         preferences = (
