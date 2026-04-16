@@ -156,6 +156,7 @@ async def get_subscription(
             "ends_at": org.subscription_ends_at.isoformat() if org.subscription_ends_at else None,
             "has_lifetime_starter": org.has_lifetime_starter,
             "fallback_tier_on_end": fallback_tier,  # "starter" or "none" — shown to cancelled Pro users
+            "can_manage_billing": org.stripe_customer_id is not None,  # false for comped/internal accounts
         },
         "usage": usage,
     }
